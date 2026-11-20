@@ -35,4 +35,31 @@ f = os.path.join(d, "st.wav"); engine.write_wav(f, c); r = engine.load_wav(f); a
 e = fresh(); e.preview(3, e.pads[10].raw); x = run(e, 0.2); e.note_off(3); y = run(e, 0.2); assert rms(x) > 0.01 and rms(y[2000:]) < 1e-6
 # save/load
 e.pads[2].mode = 2; e.pads[2].rev = True; e.pads[2].fine = -20; e.pads[2].fout = 300; f = os.path.join(d, "p.json"); e.save(f); e2 = Engine(); e2.load(f); q = e2.pads[2]; assert (q.mode, q.rev, q.fine, q.fout) == (2, True, -20, 300)
+# time-stretch: the length changes, the pitch does not
+import numpy as np
+import engine as _e
+tone = os.path.join(tempfile.mkdtemp(), "tone.wav")
+t = np.arange(_e.SR * 2) / _e.SR
+_e.write_wav(tone, 0.5 * np.sin(2 * np.pi * 220 * t))
+sp = _e.Pad(0); sp.load(tone)
+def peak_hz(buf):
+    x = buf[4096:4096 + 32768, 0]
+    return np.argmax(np.abs(np.fft.rfft(x * np.hanning(len(x))))) * _e.SR / len(x)
+for pct in (50.0, 80.0, 125.0, 200.0):
+    sp.stretch = pct; sp.bake()
+    assert abs(sp.seconds() - 2.0 * pct / 100) < 0.001, sp.seconds()
+    assert abs(peak_hz(sp.buf) - 220) < 3, peak_hz(sp.buf)
+    level = float(np.sqrt(np.mean(sp.buf[8000:-8000, 0] ** 2)))
+    assert 0.3 < level < 0.4, level                 # no dips or doubling where windows overlap
+print("stretch 50-200%%: length exact, pitch %.0f Hz, level %.3f" % (peak_hz(sp.buf), level))
+# drum hits keep their timing: a click every 0.25 s lands every 0.375 s at 150%
+clicks = np.zeros(_e.SR * 2); clicks[::_e.SR // 4] = 1.0
+clicks = np.convolve(clicks, np.exp(-np.arange(400) / 60.0))[:len(clicks)]
+_e.write_wav(tone, clicks * 0.8); _e._cache.clear()
+sp = _e.Pad(0); sp.load(tone); sp.stretch = 150.0; sp.bake()
+env = np.abs(sp.buf[:, 0]); hits = [i for i in range(1, len(env) - 1) if env[i] > 0.4 and env[i - 1] <= 0.4]
+hits = [h for j, h in enumerate(hits) if j == 0 or h - hits[j - 1] > 2000]
+gaps = np.diff(hits) / _e.SR
+print("stretched hits: %d, spacing %.3f-%.3f s (want 0.375)" % (len(hits), gaps.min(), gaps.max()))
+assert len(hits) == 7 and abs(hits[0] / _e.SR - 0.375) < 0.003 and abs(gaps - 0.375).max() < 0.003   # the hit at 0 is not a crossing
 print("ALL SAMPLER OK")

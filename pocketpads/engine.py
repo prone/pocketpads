@@ -19,6 +19,7 @@ The UI thread and the audio thread share this object. The rules that keep that s
 * bake() never modifies a buffer in place; it builds a new one and swaps it in.
 
 Units: pitch in semitones, fine in cents, filt -100..100 (negative low-pass, positive high-pass),
+stretch in percent of the original length,
 fin/fout (fade in/out) in milliseconds, start/end as fractions of the file, sends 0..1.
 """
 import ctypes
@@ -57,6 +58,8 @@ FITS = [("1 BEAT", 1), ("2 BEATS", 2), ("1 BAR", 4), ("2 BARS", 8), ("4 BARS", 1
 MAX_CAPTURE_BLOCKS = 60 * 44100 // 512      # resampling stops collecting after a minute
 MAX_WAV_BYTES = 256 * 1024 * 1024    # largest file load_wav will read
 MAX_BAKE_SECONDS = 240               # longest playable buffer a pad may hold (pitching down stretches it)
+STRETCH_WIN = 1024                   # time-stretch window, samples (23 ms)
+STRETCH_MIN, STRETCH_MAX = 50.0, 200.0   # allowed stretch, percent of the original length
 HSIZE = 1 << 17          # master history for stutter / tape stop (about 3 s)
 TAPS = 127               # master filter length
 _HAM = np.hamming(TAPS)
@@ -176,6 +179,88 @@ class Reverb:
 
 
 # ---------------------------------------------------------------- WAV files
+def _onsets(mono):
+    """Sample positions where a hit starts: the level jumps to at least twice what came just before."""
+    size = 220                                        # 5 ms
+    frames = len(mono) // size
+    if frames < 8:
+        return []
+    # Look at the sample-to-sample change as well as the level: that brings out a hi-hat or snare
+    # arriving on top of a loud bass note, which the level alone would hide.
+    edge = np.abs(np.diff(mono, prepend=mono[:1]))
+    found = set()
+    for sig in (np.abs(mono), edge):
+        env = sig[:frames * size].reshape(frames, size).max(axis=1)
+        csum = np.concatenate(([0.0], np.cumsum(env, dtype=np.float64)))
+        idx = np.arange(frames)
+        lo = np.maximum(0, idx - 4)
+        before = (csum[idx] - csum[lo]) / np.maximum(1, idx - lo)
+        for f in np.nonzero((env > 0.05 * float(env.max())) & (env > 1.7 * before + 1e-6))[0]:
+            near = edge[f * size:(f + 3) * size]         # the attack itself is the steepest point close by
+            found.add(f * size + int(np.argmax(near > 0.5 * near.max())))
+    out = []
+    for at in sorted(found):
+        if not out or at - out[-1] > 1764:            # hits closer than 40 ms count as one
+            out.append(at)
+    return out
+
+
+def time_stretch(a, factor):
+    """Make audio `factor` times as long without changing its pitch.
+
+    Overlap-add with a search (WSOLA): the output is built from overlapping 23 ms windows of the input.
+    Windows are taken closer together or further apart than they are laid down, and each is nudged by
+    up to 12 ms to where it lines up best with the audio already written, so waveforms join without
+    phase cancellation.
+
+    Plain WSOLA doubles or drops drum hits, so hits are found first and handled separately: each one is
+    copied across untouched at its exact new time, and only the sound between hits is stretched.
+    Long sustained notes can still turn slightly grainy at large settings.
+    """
+    n = len(a)
+    n_out = max(2, int(round(n * factor)))
+    if abs(factor - 1.0) < 1e-3 or n < 4 * STRETCH_WIN:
+        return resample(a, n / n_out) if n_out != n else a
+    win, hop, tol = STRETCH_WIN, STRETCH_WIN // 2, STRETCH_WIN // 2
+    pad = tol + hop                      # x[pad] is the first input sample; out[hop] is the first output sample
+    x = np.concatenate([np.zeros((pad, a.shape[1]), np.float32), a,
+                        np.zeros((2 * win + tol, a.shape[1]), np.float32)])
+    mono = x.sum(axis=1)
+    hits = _onsets(mono)
+    w = np.hanning(win + 1)[:win].astype(np.float32)[:, None]      # these overlap to exactly 1.0
+    frames = n_out // hop + 3
+    out = np.zeros((frames * hop + win, a.shape[1]), np.float32)
+    last = pad + n                       # highest allowed read position
+    pos = tol                            # where the previous window was read from
+    out[:win] += x[pos:pos + win] * w
+    j, lock_end, floor = 0, -1, 0        # next hit, end of the untouched copy, earliest position allowed
+    while j < len(hits) and hits[j] < pos + win:
+        j, lock_end, floor = j + 1, hits[j] + win, hits[j] + hop // 2
+    for k in range(1, frames):
+        t = k * hop
+        hit = hits[j] if j < len(hits) else None
+        if pos + hop <= lock_end:        # still copying a hit across unchanged
+            pos += hop
+        elif hit is not None and (hit - pad) * factor + hop - t < win:
+            # The hit belongs in this window: read from exactly where it lands on time.
+            pos = max(0, hit - max(0, int((hit - pad) * factor + hop - t)))
+            j, lock_end, floor = j + 1, hit + win, hit + hop // 2
+        else:
+            ceiling = last if hit is None else max(floor, hit - win)   # never reach into the next hit early
+            ideal = pad + int((t - hop) / factor)
+            follow = min(last, pos + hop)                              # what would come next unstretched
+            lo = min(max(ideal - tol, floor), ceiling)
+            hi = min(max(ideal + tol, lo), ceiling)
+            if hi > lo:
+                match = np.correlate(mono[lo:hi + win], mono[follow:follow + win], "valid")
+                pos = lo + int(np.argmax(match))
+            else:
+                pos = lo
+        pos = min(pos, last)
+        out[t:t + win] += x[pos:pos + win] * w
+    return out[hop:hop + n_out]
+
+
 def resample(a, ratio):
     """Linear resample of an (n, 2) float array; ratio > 1 shortens it."""
     n = len(a)
@@ -341,14 +426,15 @@ class Pad:
         self.vol, self.pitch, self.start, self.end = 0.8, 0, 0.0, 1.0
         self.filt, self.dsend, self.rsend, self.choke = 0, 0.0, 0.0, 0
         self.fine, self.mode, self.rev, self.fin, self.fout = 0, 0, False, 0, 0
+        self.stretch = 100.0             # length in percent, pitch unchanged
         self.mute = self.solo = False
 
     def copy_settings(self, other):
-        for k in ("vol", "pitch", "fine", "start", "end", "filt", "dsend", "rsend", "choke", "mode", "rev", "fin", "fout"):
+        for k in ("vol", "pitch", "fine", "start", "end", "filt", "dsend", "rsend", "choke", "mode", "rev", "fin", "fout", "stretch"):
             setattr(self, k, getattr(other, k))
 
     def region_seconds(self):
-        """Length of the trimmed sample at its original pitch."""
+        """Length of the trimmed sample at its original pitch, before any stretch."""
         return 0.0 if self.raw is None else (self.end - self.start) * len(self.raw) / SR
 
     def load(self, path):
@@ -359,7 +445,7 @@ class Pad:
         self.bake()
 
     def bake(self):
-        """Apply trim and pitch to the raw sample, producing the playable buffer."""
+        """Render the playable buffer: trim, reverse, stretch, pitch, filter, then fades."""
         if self.raw is None:
             self.buf = None
             return
@@ -370,7 +456,10 @@ class Pad:
         if self.rev:
             seg = seg[::-1]
         ratio = 2.0 ** ((self.pitch + self.fine / 100.0) / 12.0)
-        seg = seg[:int(MAX_BAKE_SECONDS * SR * ratio)]
+        factor = self.stretch / 100.0
+        seg = seg[:int(MAX_BAKE_SECONDS * SR * ratio / factor)]
+        if abs(factor - 1.0) > 1e-3:
+            seg = time_stretch(seg, factor)
         if self.pitch or self.fine:
             seg = resample(seg, ratio)
         seg = fft_filter(seg, self.filt / 100.0) if self.filt else seg.copy()
@@ -841,7 +930,7 @@ class Engine:
             "pads": [{"path": _rel(p.path) if p.path else "", "vol": p.vol, "pitch": p.pitch,
                       "start": p.start, "end": p.end, "mute": p.mute, "name": p.name,
                       "filt": p.filt, "dsend": p.dsend, "rsend": p.rsend, "choke": p.choke,
-                      "fine": p.fine, "mode": p.mode, "rev": p.rev, "fin": p.fin, "fout": p.fout}
+                      "fine": p.fine, "stretch": p.stretch, "mode": p.mode, "rev": p.rev, "fin": p.fin, "fout": p.fout}
                      for p in self.pads],
         }
 
@@ -887,6 +976,7 @@ class Engine:
             p.rsend = float(min(1, max(0, s.get("rsend", 0))))
             p.choke = int(s.get("choke", 0)) % (CHOKE_GROUPS + 1)
             p.fine = int(min(50, max(-50, s.get("fine", 0))))
+            p.stretch = float(min(STRETCH_MAX, max(STRETCH_MIN, s.get("stretch", 100.0))))
             p.mode = int(s.get("mode", 0)) % len(MODES)
             p.rev = bool(s.get("rev", False))
             p.fin = int(min(2000, max(0, s.get("fin", 0))))

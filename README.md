@@ -15,7 +15,8 @@ A 16-pad sample sequencer and sampler for Linux handhelds, built for the TrimUI 
 - Note repeat, MPC-style swing (50 to 75%), and hold-to-apply stutter, tape stop and filter sweeps on the whole mix
 - Sampling: record ten seconds from the built-in microphone and have it chopped onto the pads
 - Chopping: at detected hits, into 4, 8 or 16 equal pieces, or live by tapping as the sample plays
-- Fit a loop to the tempo, spread one sound across all pads a semitone apart, resample the output to a pad
+- Time-stretch: change a sample's length from half to double without changing its pitch, with drum hits kept on time
+- Fit a loop to the tempo by stretching (pitch kept) or repitching, spread one sound across all pads a semitone apart, resample the output to a pad
 - Loads WAV directly, and MP3, FLAC, OGG, M4A, AAC, AIFF and Opus through ffmpeg
 - A built-in starter kit that is synthesized on first run, so no sample files are shipped
 - The right analog stick works as a data wheel
@@ -83,7 +84,7 @@ Each prints a line ending in `OK` when it passes.
 
 - Changing a pad setting re-renders that pad's audio; on samples longer than a few seconds this waits until you stop adjusting.
 - Converting a long MP3 pauses the screen until it finishes.
-- Pitch and tempo are linked (no time-stretch), as on classic samplers.
+- Stretch works on samples up to 30 seconds and pauses briefly while it renders (about 0.16 s per second of audio on the Smart Pro).
 - No MIDI yet.
 
 ## Contributing

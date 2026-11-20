@@ -16,7 +16,8 @@ import numpy as np
 import pygame
 
 import kit
-from engine import (APP_DIR, CHOKE_GROUPS, DELAY_TIMES, FITS, HOLD, MODES, NPADS, NPAT, RATES, SR, STUTTERS, Engine,
+from engine import (APP_DIR, CHOKE_GROUPS, DELAY_TIMES, FITS, HOLD, MODES, NPADS, NPAT, RATES, SR, STRETCH_MAX,
+                    STRETCH_MIN, STUTTERS, Engine,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
 
 SAMPLES = os.path.join(APP_DIR, "samples")
@@ -31,6 +32,7 @@ REC_SECONDS = 10
 # set PP_REC_DEVICE (for example "default" or "plughw:1,0") on other hardware.
 REC_DEVICE = os.environ.get("PP_REC_DEVICE", "hw:0,0")
 SPREAD_MAX_SECONDS = 20   # SPREAD makes 16 pitched copies, so long samples would exhaust memory
+STRETCH_MAX_SECONDS = 30  # stretching takes about 0.16 s per second of audio on the handheld
 LONG_SAMPLE_SECONDS = 4   # above this, re-rendering a pad waits until the value stops changing
 OPEN_GRAINBRICK = 42  # exit code the launcher script turns into "run GrainBrick, then come back"
 
@@ -107,6 +109,7 @@ class App:
         self.live = None       # live chop in progress
         self.resampling = None
         self.chop_mode, self.fit_idx = 0, 2
+        self.fit_keep = False  # FIT TO TEMPO: True stretches (pitch kept), False repitches
         self.select_alone = False
         self.audition = None   # (pad, start time) while the SOUND page is playing a pad
         self.wheel, self.wheel_acc, self.wheel_seen = 0.0, 0.0, False
@@ -493,8 +496,8 @@ class App:
             p = e.pads[self.sel]
             p.solo = not p.solo
 
-    SOUND_ROWS = ["WAVEFORM", "SAMPLE", "VOLUME", "PITCH", "FINE TUNE", "FILTER", "START", "END", "MODE", "REVERSE", "FADE IN",
-                  "FADE OUT", "DELAY", "REVERB", "CHOKE", "CHOP", "FIT TO TEMPO", "SPREAD"]
+    SOUND_ROWS = ["WAVEFORM", "SAMPLE", "VOLUME", "PITCH", "FINE TUNE", "STRETCH", "FILTER", "START", "END", "MODE", "REVERSE", "FADE IN",
+                  "FADE OUT", "DELAY", "REVERB", "CHOKE", "CHOP", "FIT STYLE", "FIT TO TEMPO", "SPREAD"]
     CHOPS = [("AT HITS", 0), ("4 EQUAL", 4), ("8 EQUAL", 8), ("16 EQUAL", 16), ("LIVE: TAP AS IT PLAYS", -1)]
 
     def press_sound(self, b, sel):
@@ -537,6 +540,13 @@ class App:
                 self.rebake(p)
             elif row == "CHOP":
                 self.chop_mode = (self.chop_mode + (1 if d > 0 else -1)) % len(self.CHOPS)
+            elif row == "STRETCH" and p.region_seconds() > STRETCH_MAX_SECONDS:
+                self.say("TOO LONG TO STRETCH (%d s MAX) - TRIM OR CHOP IT" % STRETCH_MAX_SECONDS, 3.5)
+            elif row == "STRETCH":
+                p.stretch = float(min(STRETCH_MAX, max(STRETCH_MIN, round(p.stretch) + d)))
+                self.rebake(p)
+            elif row == "FIT STYLE":
+                self.fit_keep = not self.fit_keep
             elif row == "FIT TO TEMPO":
                 self.fit_idx = (self.fit_idx + (1 if d > 0 else -1)) % len(FITS)
             elif row == "DELAY":
@@ -625,10 +635,24 @@ class App:
             self.live_finish()
 
     def fit_to_tempo(self):
-        """Repitch the pad so it lasts an exact number of beats at the project tempo."""
+        """Make the pad last an exact number of beats at the project tempo, by stretching or repitching."""
         p = self.eng.pads[self.sel]
         label, beats = FITS[self.fit_idx]
-        semis = 12.0 * math.log2(p.region_seconds() / (beats * 60.0 / self.eng.bpm))
+        want = beats * 60.0 / self.eng.bpm
+        self.pending_bake = None
+        if self.fit_keep and p.region_seconds() > STRETCH_MAX_SECONDS:
+            self.say("TOO LONG TO STRETCH (%d s MAX) - TRIM OR CHOP IT" % STRETCH_MAX_SECONDS, 3.5)
+            return
+        if self.fit_keep:               # change the length only, at whatever pitch the pad is set to
+            pct = 100.0 * want * 2.0 ** ((p.pitch + p.fine / 100.0) / 12.0) / p.region_seconds()
+            if not STRETCH_MIN <= pct <= STRETCH_MAX:
+                self.say("TOO FAR: THAT NEEDS A %d%% STRETCH (%d-%d)" % (round(pct), STRETCH_MIN, STRETCH_MAX), 3.5)
+                return
+            p.stretch = pct
+            p.bake()
+            self.say("FITTED TO %s: STRETCH %.1f%%, PITCH KEPT" % (label, pct), 3)
+            return
+        semis = 12.0 * math.log2(p.region_seconds() * p.stretch / 100.0 / want)
         if abs(semis) > 24:
             self.say("TOO FAR: THAT NEEDS %+d SEMITONES" % round(semis), 3)
             return
@@ -1378,6 +1402,8 @@ class App:
                 "DELAY": "send %d" % round(p.dsend * 100), "REVERB": "send %d" % round(p.rsend * 100),
                 "CHOKE": "group %d  (pads in a group cut each other)" % p.choke if p.choke else "OFF",
                 "FINE TUNE": "%+d cents" % p.fine,
+                "STRETCH": "OFF" if abs(p.stretch - 100) < 0.05 else "%.4g%% length, same pitch" % round(p.stretch, 1),
+                "FIT STYLE": "KEEP PITCH (stretch)" if self.fit_keep else "CHANGE PITCH (classic)",
                 "MODE": MODES[p.mode] + ("", "  (plays while held)", "  (hit to start, hit to stop)")[p.mode],
                 "REVERSE": "ON" if p.rev else "OFF",
                 "FADE IN": "%d ms" % p.fin if p.fin else "OFF", "FADE OUT": "%d ms" % p.fout if p.fout else "OFF",
@@ -1386,7 +1412,8 @@ class App:
                 "SPREAD": "this sound on all 16 pads, a semitone apart  -  A",
                 "SAMPLE": "%s   -  A to browse files" % (os.path.basename(p.path)[:34] or "(none)")}
         fracs = {"VOLUME": p.vol / 1.5, "PITCH": (p.pitch + 24) / 48.0, "FILTER": (p.filt + 100) / 200.0,
-                 "FINE TUNE": (p.fine + 50) / 100.0, "START": p.start, "END": p.end, "DELAY": p.dsend,
+                 "FINE TUNE": (p.fine + 50) / 100.0,
+                 "STRETCH": (p.stretch - STRETCH_MIN) / (STRETCH_MAX - STRETCH_MIN), "START": p.start, "END": p.end, "DELAY": p.dsend,
                  "REVERB": p.rsend, "FADE IN": p.fin / 2000.0, "FADE OUT": p.fout / 2000.0}
         rows, shown = self.SOUND_ROWS[1:], 9
         top = max(0, min(self.sound_row - 1 - 4, len(rows) - shown))
