@@ -408,6 +408,22 @@ class App:
             self.say("LOADED P%02d" % self.slot)
         return True
 
+    def ask_new_project(self):
+        """NEW keeps the open project and starts the new one in the first empty slot."""
+        empty = [n for n in range(1, SLOTS + 1) if n != self.loaded and not os.path.exists(self.slot_path(n))]
+        if not empty:
+            self.confirm = ("ALL %d SLOTS ARE USED. REPLACE P%02d WITH A NEW PROJECT?" % (SLOTS, self.slot), self.new_project)
+            return
+
+        def go():
+            self.save_project(quiet=True, autosave=True)       # keep what is open
+            self.slot = empty[0]
+            self.new_project(quiet=True)
+            self.save_project(quiet=True)
+            self.say("NEW PROJECT IN P%02d  (P%02d WAS SAVED)" % (empty[0], keep), 3.5)
+        keep = self.loaded
+        self.confirm = ("START A NEW PROJECT IN P%02d?" % empty[0], go)
+
     def new_project(self, quiet=False):
         self.eng.stop()
         self.loaded, self.pending_bake = self.slot, None
@@ -1105,7 +1121,7 @@ class App:
             elif row == "LOAD":
                 self.confirm = ("LOAD P%02d? UNSAVED CHANGES ARE LOST" % self.slot, self.load_project)
             elif row == "NEW":
-                self.confirm = ("START A NEW PROJECT?", self.new_project)
+                self.ask_new_project()
             elif row == "RECORD MIC":
                 self.confirm = ("RECORD %d SECONDS? REPLACES PADS %d-%d" % (REC_SECONDS, self.base() + 1, self.base() + BANK),
                                 self.start_record)
@@ -1851,7 +1867,7 @@ class App:
         here = "  - open now" if self.slot == self.loaded else ""
         vals = {"PROJECT": "P%02d  %s%s" % (self.slot, "(saved)" if exists else "(empty)", here),
                 "SAVE": "save to P%02d" % self.slot, "LOAD": "load P%02d" % self.slot,
-                "NEW": "starter kit and demo beat", "TEMPO": "%d BPM" % round(e.bpm),
+                "NEW": "new project in the next empty slot", "TEMPO": "%d BPM" % round(e.bpm),
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
                 "MIDI OUT": ("channel %d  -  pads send notes, plus clock" % self.midi.out_channel) if self.midi.out_channel
                             else "OFF",
