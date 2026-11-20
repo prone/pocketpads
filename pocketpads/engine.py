@@ -14,6 +14,8 @@ Threads
 The UI thread and the audio thread share this object. The rules that keep that safe:
 * The UI may assign simple settings directly (pad.vol, engine.bpm, pattern steps, a new pad.buf).
   Each is a single reference swap, and a voice keeps its own reference to the buffer it started with.
+* The song chain is a list the UI edits; the audio thread takes a snapshot of it at each bar.
+* `on_note`, if set, is called on the audio thread for each pad that plays; it must only queue.
 * Anything that changes the audio thread's own state (voices, held repeats, transport) goes through
   the `cmds` queue: use trigger(), hold(), release(), note_off(), play(), stop(), preview().
 * bake() never modifies a buffer in place; it builds a new one and swaps it in.
@@ -45,6 +47,7 @@ PAT_NAMES = "ABCDEFGH"
 MIN_STEPS, MAX_STEPS = 16, 128
 SONG_SLOTS = 64                      # longest pattern chain
 NOTE_RANGE = 24                      # a step can play up to two octaves above or below the pad's pitch
+VARIANT_MAX_BYTES = 48 * 1024 * 1024   # most memory one pad's note copies may use
 VARIANT_MAX_SECONDS = 12             # pads longer than this ignore step notes (each note keeps its own copy)
 FADE = 256
 HEADROOM = 0.7
@@ -65,6 +68,7 @@ COMP_RATIO = 4.0
 ONESHOT, HOLD, LOOP = 0, 1, 2
 MODES = ["ONE-SHOT", "HOLD", "LOOP"]
 FITS = [("1 BEAT", 1), ("2 BEATS", 2), ("1 BAR", 4), ("2 BARS", 8), ("4 BARS", 16)]
+EXPORT_MAX_SECONDS = 300             # longest export; about 100 MB of audio in memory while it is written
 MAX_CAPTURE_BLOCKS = 60 * 44100 // 512      # resampling stops collecting after a minute
 MAX_WAV_BYTES = 256 * 1024 * 1024    # largest file load_wav will read
 MAX_BAKE_SECONDS = 240               # longest playable buffer a pad may hold (pitching down stretches it)
@@ -349,11 +353,13 @@ def load_wav(path, max_seconds=180):
 def write_wav(path, audio):
     """Write 16-bit PCM; a 1-D array is mono, an (n, 2) array is stereo."""
     ch = audio.shape[1] if getattr(audio, "ndim", 1) == 2 else 1
-    pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
+    size = len(audio) * ch * 2
     with open(path, "wb") as f:
-        f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt ")
+        f.write(b"RIFF" + struct.pack("<I", 36 + size) + b"WAVEfmt ")
         f.write(struct.pack("<IHHIIHH", 16, 1, ch, SR, SR * 2 * ch, 2 * ch, 16))
-        f.write(b"data" + struct.pack("<I", len(pcm)) + pcm)
+        f.write(b"data" + struct.pack("<I", size))
+        for lo in range(0, len(audio), 1 << 18):         # converted a piece at a time to keep memory flat
+            f.write((np.clip(audio[lo:lo + (1 << 18)], -1, 1) * 32767).astype("<i2").tobytes())
 
 
 def find_chops(raw, count=16):
@@ -428,12 +434,14 @@ def prune_cache(pads):
 class Pad:
     def __init__(self, index):
         self.index = index
+        self.notes_wanted = set()        # offsets the patterns use; survives clear() and reloads
         self.clear()
 
     def clear(self):
         self.name, self.path = "EMPTY", ""
         self.raw = self.buf = self.peaks = None
         self.variants = {}               # semitone offset -> buffer, for steps that play the pad at another note
+        self._variant_src = None         # the baked buffer those copies were made from
         self.vol, self.pitch, self.start, self.end = 0.8, 0, 0.0, 1.0
         self.filt, self.dsend, self.rsend, self.choke = 0, 0.0, 0.0, 0
         self.fine, self.mode, self.rev, self.fin, self.fout = 0, 0, False, 0, 0
@@ -488,18 +496,25 @@ class Pad:
         seg[:fi] *= np.linspace(0, 1, fi, dtype=np.float32)[:, None]
         seg[-fo:] *= np.linspace(1, 0, fo, dtype=np.float32)[:, None]
         self.buf = seg
-        self.set_variants(self.variants.keys())
+        self.set_variants(self.notes_wanted)
 
     def set_variants(self, offsets):
         """Keep a repitched copy of the baked sound for each semitone offset the patterns use."""
-        buf, out = self.buf, {}
+        self.notes_wanted = {n for n in offsets if n}
+        buf, out, used = self.buf, {}, 0
+        same = buf is self._variant_src
         if buf is not None and len(buf) <= VARIANT_MAX_SECONDS * SR:
-            for n in set(offsets):
-                if n:
+            for n in sorted(self.notes_wanted, key=abs):
+                v = self.variants.get(n) if same else None      # an unchanged sound keeps the copies it has
+                if v is None:
+                    if used > VARIANT_MAX_BYTES:                 # out of budget: this note plays at the pad's pitch
+                        continue
                     v = resample(buf, 2.0 ** (n / 12.0))
                     fo = min(220, len(v) // 2)
                     v[-fo:] *= np.linspace(1, 0, fo, dtype=np.float32)[:, None]
-                    out[n] = v
+                used += v.nbytes
+                out[n] = v
+        self._variant_src = buf
         self.variants = out              # one swap, so the audio thread never sees a half-built table
 
     def seconds(self):
@@ -528,13 +543,14 @@ class Engine:
         self.cur_pat, self.pending_pat = 0, None
         self.song, self.song_on, self.song_pos = [], False, 0     # chain of pattern numbers; next slot to play
         self.bpm, self.swing, self.master = 120.0, 50.0, 0.8
+        self._comp_amt = 0.0
         self.comp, self._comp_gain = 0.0, 1.0      # master compressor amount 0..1, and its current gain
         self.delay_div, self.delay_fb, self.reverb_size = 1, 0.45, 0.4
         self.repeat_on, self.repeat_div, self.stutter_div = False, 3, 1
         self.delay, self.reverb = Delay(), Reverb()
         self.holds = {}
         self.cap = None
-        self.on_note = None              # callback(pad, velocity, semitones) for every pad that sounds
+        self.on_note = None              # callback(pad, velocity, semitones) when a pad is played or sequenced
         self.perf = {"lp": False, "hp": False, "stutter": False, "tape": False}
         self.hist = np.zeros((HSIZE, 2), np.float32)
         self.hw = 0
@@ -546,7 +562,7 @@ class Engine:
         self.playing = self.rec = False
         self.step = -1
         self.song_slot = 0               # chain slot now playing
-        self.bars_played = 0             # patterns completed since play started (used when exporting)
+        self.bars_played = 0             # patterns completed since play started
         self.voices = []
         self.cmds = deque()
         self.pad_flash = [0.0] * NPADS
@@ -564,8 +580,9 @@ class Engine:
         self.audio_error = ""
 
     # ----- control (called from the UI thread)
-    def trigger(self, pad, vel=1.0):
-        self.cmds.append(("trig", pad, vel))
+    def trigger(self, pad, vel=1.0, echo=True):
+        """Play a pad now. echo=False keeps it off MIDI out (used for notes that came in over MIDI)."""
+        self.cmds.append(("trig", pad, vel, echo))
         self.pad_flash[pad] = time.time()
         if self.playing and self.rec:
             sf = self.step_frames()
@@ -574,6 +591,7 @@ class Engine:
             pat = self.patterns[self.cur_pat]
             target = (self.step + k) % pat["length"]
             if not pat["steps"][pad][target]:
+                pat["notes"][pad][target] = 0
                 pat["steps"][pad][target] = 1
             if k >= 1:
                 self._skip.add((pad, target))
@@ -627,7 +645,7 @@ class Engine:
         """Make sure every note used in the patterns has audio ready (call after editing notes or loading)."""
         for i in (range(NPADS) if pad is None else (pad,)):
             used = {n for pat in self.patterns for n, on in zip(pat["notes"][i], pat["steps"][i]) if n and on}
-            if used != set(self.pads[i].variants):
+            if used != self.pads[i].notes_wanted:
                 self.pads[i].set_variants(used)
 
     def copy_pattern(self, src, dst):
@@ -636,13 +654,13 @@ class Engine:
                               "notes": [r[:] for r in a["notes"]]}
 
     def clear_pattern(self, index):
-        length = self.patterns[index]["length"]
-        self.patterns[index] = new_pattern()
-        self.patterns[index]["length"] = length
+        fresh = new_pattern()
+        fresh["length"] = self.patterns[index]["length"]
+        self.patterns[index] = fresh         # swapped in complete, so the audio thread never sees a short one
         self.refresh_variants()
 
-    def song_bars(self):
-        """Total length of the song in steps (0 if the chain is empty)."""
+    def song_steps(self):
+        """Total length of the song in steps (0 if the chain is empty)."""  # 16 steps = one bar
         return sum(self.patterns[i]["length"] for i in self.song)
 
     def step_frames(self):
@@ -661,7 +679,8 @@ class Engine:
             if not v[5] and (v[3] == pad or (group and self.pads[v[3]].choke == group)):
                 was_looping = was_looping or (v[3] == pad and v[9])
                 v[5], v[6] = True, off
-        if manual and p.mode == LOOP and was_looping and buf is p.buf:
+        own = buf is p.buf or bool(note)        # the pad's own sound (possibly at a step note), not a preview
+        if manual and p.mode == LOOP and was_looping and own:
             return                      # played by hand, a looping pad is a switch: the second hit turns it off
         if p.mode != HOLD:
             gate = None
@@ -675,7 +694,7 @@ class Engine:
         #   4 offset      start position inside the block 10 gate         frames left before a HOLD pad fades
         #   5 fading      being faded out                 11 fade done    samples of the fade already played
         self.voices.append([buf, 0, p.vol * vel, pad, off, False, 0, p.dsend, p.rsend,
-                            p.mode == LOOP and buf is p.buf, gate, 0])
+                            p.mode == LOOP and own, gate, 0])
         if len(self.voices) > MAX_VOICES:
             self.voices.pop(0)
 
@@ -684,7 +703,7 @@ class Engine:
         while self.cmds:
             c = self.cmds.popleft()
             if c[0] == "trig":
-                self._start_voice(c[1], c[2], 0, manual=True, note=0)
+                self._start_voice(c[1], c[2], 0, manual=True, note=0 if c[3] else None)
             elif c[0] == "relall":
                 self.holds.clear()
             elif c[0] == "off":
@@ -729,6 +748,7 @@ class Engine:
                         k = int(round((t - self._bar_clock) / sf))
                         st = k % pat["length"]
                         if not pat["steps"][pad][st]:
+                            pat["notes"][pad][st] = 0
                             pat["steps"][pad][st] = 1
                         if self._bar_clock + k * sf >= self._base - 2:
                             self._skip.add((pad, st))
@@ -738,8 +758,11 @@ class Engine:
             while self._next_time < end:
                 off = max(0, int(self._next_time - self._clock))
                 st = self._next_step
-                if st == 0 and self.song_on and self.song:
-                    song = self.song                    # song mode: each pattern plays once, then the next
+                if st >= self.patterns[self.cur_pat]["length"]:     # the pattern was shortened under the playhead
+                    st = 0
+                song = tuple(self.song)                 # a snapshot: the UI may edit the chain at any moment
+                if st == 0 and self.song_on and song:
+                    # song mode: each pattern plays once, then the next
                     self.song_slot = self.song_pos % len(song)
                     self.cur_pat, self.pending_pat = song[self.song_slot] % NPAT, None
                     self.song_pos = (self.song_slot + 1) % len(song)
@@ -831,10 +854,13 @@ class Engine:
             out += wet
         out *= self.master * HEADROOM
         self._perform(out, n)
-        if self.comp > 0.0 or self._comp_gain < 0.999:
+        self._comp_amt += (self.comp - self._comp_amt) * 0.15       # glide, so switching it off does not jump
+        if self._comp_amt < 1e-3:
+            self._comp_amt = 0.0
+        if self._comp_amt > 0.0 or self._comp_gain < 0.999:
             # Master compressor. The level is measured once per block and the gain glides to it, which lets
             # the front of each drum hit through (punch) and then pulls the body together (glue).
-            amount = self.comp
+            amount = self._comp_amt
             thresh = 0.5 - 0.42 * amount
             pk = float(np.abs(out).max())
             target = (thresh + (pk - thresh) / COMP_RATIO) / pk if (amount > 0.0 and pk > thresh) else 1.0
@@ -1010,26 +1036,31 @@ class Engine:
             self.sdl.SDL_CloseAudioDevice(self.dev)
             self.dev = None
 
-    def render_offline(self, loops=4, tail=2.5, max_seconds=600, progress=None):
+    def offline_seconds(self, loops=4):
+        """How long render_offline would run, before the tail."""
+        steps = self.song_steps() if (self.song_on and self.song) else loops * self.patterns[self.cur_pat]["length"]
+        return steps * 60.0 / self.bpm / 4.0
+
+    def render_offline(self, loops=4, tail=2.5, max_seconds=EXPORT_MAX_SECONDS, progress=None):
         """Render the song (or the current pattern `loops` times) to an (n, 2) array, faster than real time.
 
-        Works on a private copy of the project, so the live engine keeps playing or idling untouched.
+        Works on a private copy of the settings that shares the audio already in memory, so the live
+        engine is untouched and the result is exactly what is heard. Stops at max_seconds.
         `progress`, if given, is called with a 0..1 fraction now and then.
         """
+        d = self.to_dict()
+        for pd in d["pads"]:
+            pd["path"] = ""                         # nothing is read from disk
         twin = Engine()
-        twin.from_dict(self.to_dict())
-        twin.cur_pat = self.cur_pat
-        for a, b in zip(twin.pads, self.pads):      # share audio already in memory instead of reloading files
-            if b.raw is not None and a.raw is None:
-                a.raw, a.peaks, a.path, a.name = b.raw, b.peaks, b.path, b.name
-                a.bake()
-            a.solo = b.solo
-        twin.refresh_variants()
-        steps = twin.song_bars() if (twin.song_on and twin.song) else loops * twin.patterns[twin.cur_pat]["length"]
-        end = min(int(round(steps * twin.step_frames())), int(max_seconds * SR))
+        twin.from_dict(d)
+        for a, b in zip(twin.pads, self.pads):      # bake() never changes a buffer in place, so sharing is safe
+            a.raw, a.peaks, a.buf, a.variants, a.name, a.solo = b.raw, b.peaks, b.buf, b.variants, b.name, b.solo
+        steps = twin.song_steps() if (twin.song_on and twin.song) else loops * twin.patterns[twin.cur_pat]["length"]
+        # Stop a hair before the bar line: rounding up would let the next bar's first hits into the tail.
+        end = min(int(steps * twin.step_frames() - 1e-3), int(max_seconds * SR))
         twin.play()
         blocks = []
-        while twin._clock < end:                    # stop exactly on the last bar line, not a block later
+        while twin._clock < end:
             blocks.append(twin.render(min(BLOCK, end - twin._clock)))
             if progress and len(blocks) % 64 == 0:
                 progress(min(0.99, twin._clock / (end + tail * SR)))
@@ -1037,6 +1068,7 @@ class Engine:
         for _ in range(int(tail * SR / BLOCK)):     # let the delay, reverb and last notes ring out
             blocks.append(twin.render(BLOCK))
         audio = np.concatenate(blocks)
+        del blocks
         f = min(len(audio), int(0.4 * SR))
         audio[-f:] *= np.linspace(1, 0, f, dtype=np.float32)[:, None]
         return audio
@@ -1050,7 +1082,7 @@ class Engine:
             "pattern": self.cur_pat,
             "patterns": [{"length": p["length"], "steps": [r[:p["length"]] for r in p["steps"]],
                           "notes": [r[:p["length"]] for r in p["notes"]]} for p in self.patterns],
-            "song": list(self.song), "song_on": self.song_on,
+            "song": list(self.song), "song_on": self.song_on,     # steps past a pattern's length are not saved
             "pads": [{"path": _rel(p.path) if p.path else "", "vol": p.vol, "pitch": p.pitch,
                       "start": p.start, "end": p.end, "mute": p.mute, "name": p.name,
                       "filt": p.filt, "dsend": p.dsend, "rsend": p.rsend, "choke": p.choke,

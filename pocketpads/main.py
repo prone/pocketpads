@@ -1,4 +1,4 @@
-"""PocketPads: a 16-pad sample sequencer for Linux handhelds."""
+"""PocketPads: a sample sequencer for Linux handhelds, 64 pads in four banks of sixteen."""
 import gc
 import glob
 import hashlib
@@ -17,7 +17,7 @@ import pygame
 
 import kit
 import midi
-from engine import (APP_DIR, BANK, BLOCK, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NBANKS, NPADS, NPAT,
+from engine import (APP_DIR, BANK, BLOCK, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NBANKS, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
@@ -57,7 +57,7 @@ TEXT, DIM = (228, 229, 235), (128, 132, 148)
 TEAL, ORANGE, RED, DARK = (62, 205, 182), (255, 152, 62), (236, 84, 84), (10, 11, 14)
 
 DIRS = ("up", "down", "left", "right")
-# Drum mode: these eight buttons play pads while L2 (pads 1-8) or R2 (pads 9-16) is held.
+# Drum mode: these eight buttons play pads while L2 (the bank's first eight pads) or R2 (the other eight) is held.
 DRUM_KEYS = ["left", "up", "right", "down", "Y", "X", "A", "B"]
 DRUM_GLYPH = {"left": "<", "up": "^", "right": ">", "down": "v"}
 
@@ -108,6 +108,7 @@ class App:
         self.song_row, self.song_cur, self.copy_to = 0, 0, 1
         self.paint = None      # BEAT page: value being painted while A is held
         self.previewing = None # file being auditioned in the import list
+        self.preview_end = 0.0 # when that audition runs out
         self.holding = {}      # button -> pad it is repeating
         self.recording = None
         self.gated = {}        # button -> HOLD pad it is sounding
@@ -138,7 +139,8 @@ class App:
         os.makedirs(SAMPLES, exist_ok=True)
         self.kit_paths = kit.ensure_kit(os.path.join(SAMPLES, "kit"))
         self.midi = midi.MidiPort(self.logline)
-        self.midi_ccs = []              # controller numbers seen so far, lowest first = knob 1
+        self.midi_ccs = []              # controller numbers of the knobs, in the order they were first turned
+        self.midi_seen = 0              # how many MIDI devices were connected last time we looked
         self.midi_held = {}             # note -> pad, for HOLD pads played from a controller
         try:
             with open(STATE) as f:
@@ -286,8 +288,7 @@ class App:
             self.repeat.pop(name, None)
             if name == "A":
                 self.paint = None
-            if name == "select" and self.select_alone and PAGES[self.page] == "SOUND" and not (
-                    self.confirm or self.browser or self.picker or self.recording or self.live):
+            if name == "select" and self.select_alone and PAGES[self.page] == "SOUND" and not self.modal():
                 self.toggle_audition()                 # a tap of SELECT on its own: play / stop
             pad = self.holding.pop(name, None)
             if pad is not None:
@@ -299,6 +300,10 @@ class App:
             if fx:
                 self.eng.perf[fx] = False
 
+    def modal(self):
+        """True while a dialog, list or recording owns the buttons."""
+        return bool(self.confirm or self.browser or self.picker or self.recording or self.live)
+
     def tick_repeat(self):
         now = time.time()
         for name, t in list(self.repeat.items()):
@@ -309,8 +314,9 @@ class App:
     def tick_wheel(self, dt):
         """The right stick is a data wheel: push it sideways to change the selected value."""
         v = self.wheel
-        busy = self.confirm or self.browser or self.picker or self.recording or self.live
-        if abs(v) < 0.25 or busy or PAGES[self.page] not in ("SOUND", "FX", "PROJ"):
+        page = PAGES[self.page]
+        idle = page not in ("SOUND", "FX", "PROJ") and not (page == "SONG" and self.SONG_ROWS[self.song_row] == "LENGTH")
+        if abs(v) < 0.25 or self.modal() or idle:
             self.wheel_acc = 0.0
             return
         push = (abs(v) - 0.25) / 0.75
@@ -362,6 +368,8 @@ class App:
             self.say("P%02d WAS DAMAGED - KEPT AS .damaged" % self.slot, 5)
             return False
         self.loaded = self.slot
+        self.sel = self.cur_step = 0
+        self.midi_held.clear()
         if missing:
             self.say("%d SAMPLE(S) MISSING" % len(missing), 4)
         elif not quiet:
@@ -371,6 +379,7 @@ class App:
     def new_project(self, quiet=False):
         self.eng.stop()
         self.loaded, self.pending_bake = self.slot, None
+        self.sel = self.cur_step = 0
         self.eng.from_dict({"bpm": 112})
         pads = self.eng.pads
         for p, path in zip(pads, self.kit_paths):
@@ -422,7 +431,9 @@ class App:
             return
         if b in ("l1", "r1"):
             d = -1 if b == "l1" else 1
-            if sel:
+            if sel and e.playing and e.song_on and e.song:
+                self.say("SONG MODE IS ON: PATTERNS FOLLOW THE CHAIN", 2.5)
+            elif sel:
                 e.select_pattern(((e.pending_pat if e.pending_pat is not None else e.cur_pat) + d) % NPAT)
             else:
                 self.page = (self.page + d) % len(PAGES)
@@ -448,6 +459,7 @@ class App:
     def step_pad(self, d):
         """Select the previous or next pad, staying inside the bank."""
         b = self.base()
+        self.flush_bake()                   # finish the pad being left before its turn is lost
         self.sel = b + (self.sel - b + d) % BANK
 
     def press_play(self, b, sel):
@@ -503,6 +515,9 @@ class App:
         if sel and b in ("left", "right", "l2", "r2"):
             # Step notes: SELECT + left/right moves this step a semitone, SELECT + L2/R2 an octave.
             d = {"left": -1, "right": 1, "l2": -12, "r2": 12}[b]
+            if e.pads[self.sel].raw is None:
+                self.say("THIS PAD HAS NO SOUND")
+                return
             if e.pads[self.sel].seconds() > VARIANT_MAX_SECONDS:
                 self.say("THIS SOUND IS TOO LONG FOR STEP NOTES (%d s MAX)" % VARIANT_MAX_SECONDS, 3)
                 return
@@ -521,7 +536,10 @@ class App:
                 # Holding A while moving paints (or wipes) every step the cursor passes over.
                 for _ in range(abs(d)):
                     self.cur_step = (self.cur_step + (1 if d > 0 else -1)) % length
-                    row[self.cur_step] = self.paint
+                    if not self.paint:
+                        row[self.cur_step] = notes[self.cur_step] = 0
+                    elif not row[self.cur_step]:         # accents already there are left alone
+                        row[self.cur_step] = self.paint
                 e.refresh_variants(self.sel)
             else:
                 self.cur_step = (self.cur_step + d) % length
@@ -532,7 +550,7 @@ class App:
                 e.refresh_variants(self.sel)
             self.confirm = ("CLEAR TRACK %d?" % (self.sel + 1), clear_track)
         elif b == "X" and sel:
-            self.confirm = ("CLEAR PATTERN %s?" % PAT_NAMES[e.cur_pat], lambda: e.clear_pattern(e.cur_pat))
+            self.ask_clear_pattern()
         elif b == "A":
             row[self.cur_step] = 0 if row[self.cur_step] else 1
             self.paint = row[self.cur_step]
@@ -557,8 +575,9 @@ class App:
     def press_song(self, b, sel):
         e = self.eng
         row = self.SONG_ROWS[self.song_row]
-        song = e.song
-        self.song_cur = min(self.song_cur, len(song))
+        song = list(e.song)             # edited as a copy and swapped in whole (the audio thread reads it)
+        slots = min(len(song) + 1, SONG_SLOTS)
+        self.song_cur = min(self.song_cur, slots - 1)
         if b == "up":
             self.song_row = (self.song_row - 1) % len(self.SONG_ROWS)
         elif b == "down":
@@ -572,26 +591,28 @@ class App:
                 self.say("SONG MODE ON: PLAYS THE CHAIN IN ORDER" if e.song_on else "SONG MODE OFF: LOOPS ONE PATTERN", 2.5)
         elif row == "CHAIN":
             if b == "left":
-                self.song_cur = (self.song_cur - 1) % (len(song) + 1)
+                self.song_cur = (self.song_cur - 1) % slots
             elif b == "right":
-                self.song_cur = (self.song_cur + 1) % (len(song) + 1)
+                self.song_cur = (self.song_cur + 1) % slots
             elif b in ("A", "Y"):
                 d = 1 if b == "A" else -1
                 if self.song_cur >= len(song):          # the empty slot at the end: add the current pattern
-                    if len(song) >= SONG_SLOTS:
+                    song.append(e.cur_pat if e.pending_pat is None else e.pending_pat)
+                    self.song_cur = min(len(song), SONG_SLOTS - 1)
+                    if len(song) == SONG_SLOTS:
                         self.say("THE CHAIN IS FULL (%d)" % SONG_SLOTS)
-                    else:
-                        song.append(e.cur_pat if e.pending_pat is None else e.pending_pat)
-                        self.song_cur = len(song)
                 else:
                     song[self.song_cur] = (song[self.song_cur] + d) % NPAT
             elif b == "X" and self.song_cur < len(song):
-                song.insert(self.song_cur, song[self.song_cur])     # repeat this slot
-                del song[SONG_SLOTS:]
+                if len(song) >= SONG_SLOTS:
+                    self.say("THE CHAIN IS FULL (%d)" % SONG_SLOTS)
+                else:
+                    song.insert(self.song_cur, song[self.song_cur])     # repeat this slot
             elif b == "B" and song:
                 del song[min(self.song_cur, len(song) - 1)]
                 if not song:
                     e.song_on = False
+            e.song = song
         elif row == "COPY PATTERN":
             if b in ("left", "right"):
                 self.copy_to = (self.copy_to + (1 if b == "right" else -1)) % NPAT
@@ -611,9 +632,13 @@ class App:
                 else:
                     go()
         elif row == "CLEAR PATTERN" and b == "A":
-            self.confirm = ("CLEAR PATTERN %s?" % PAT_NAMES[e.cur_pat], lambda: e.clear_pattern(e.cur_pat))
+            self.ask_clear_pattern()
         elif row == "LENGTH" and b in ("left", "right"):
             self.change_length(1 if b == "right" else -1)
+
+    def ask_clear_pattern(self):
+        index = self.eng.cur_pat        # fixed now: the playing pattern can change while the question is up
+        self.confirm = ("CLEAR PATTERN %s?" % PAT_NAMES[index], lambda: self.eng.clear_pattern(index))
 
     def change_length(self, d):
         """Pattern length: a bar (16 steps) at a time, or one step at a time with Y held."""
@@ -627,18 +652,18 @@ class App:
     def draw_song(self):
         e = self.eng
         song = e.song
-        self.song_cur = min(self.song_cur, len(song))
+        self.song_cur = min(self.song_cur, min(len(song) + 1, SONG_SLOTS) - 1)
         pat = e.patterns[e.cur_pat]
-        steps = e.song_bars()
+        steps = e.song_steps()
         secs = steps * 60.0 / e.bpm / 4.0
         vals = {"SONG MODE": ("ON  -  plays the chain in order" if e.song_on else "OFF  -  loops pattern %s" % PAT_NAMES[e.cur_pat]),
-                "CHAIN": ("%d patterns, %d:%02d long" % (len(song), secs // 60, secs % 60)) if song else "empty  -  press A to add pattern %s" % PAT_NAMES[e.cur_pat],
+                "CHAIN": ("%d pattern%s, %d:%02d long" % (len(song), "" if len(song) == 1 else "s", secs // 60, secs % 60)) if song else "empty  -  press A to add pattern %s" % PAT_NAMES[e.cur_pat],
                 "COPY PATTERN": "%s  to  %s   -  A to copy" % (PAT_NAMES[e.cur_pat], PAT_NAMES[self.copy_to]),
                 "CLEAR PATTERN": "empty pattern %s   -  A" % PAT_NAMES[e.cur_pat],
                 "LENGTH": "%d steps  (pattern %s, %d bar%s%s)" % (pat["length"], PAT_NAMES[e.cur_pat], pat["length"] // 16,
                                                                 "" if pat["length"] // 16 == 1 else "s",
-                                                                " + %d steps" % (pat["length"] % 16) if pat["length"] % 16 else "")}
-        ys = {"SONG MODE": 36, "CHAIN": 62, "COPY PATTERN": 236, "CLEAR PATTERN": 262, "LENGTH": 288}
+                                                                " + %d step%s" % (pat["length"] % 16, "" if pat["length"] % 16 == 1 else "s") if pat["length"] % 16 else "")}
+        ys = {"SONG MODE": 36, "CHAIN": 62, "COPY PATTERN": 232, "CLEAR PATTERN": 254, "LENGTH": 276}
         for i, name in enumerate(self.SONG_ROWS):
             y, on = ys[name], i == self.song_row
             self.box(8, y, 624, 22, PANEL if on else None, ORANGE if on else None, 4, 2)
@@ -815,6 +840,8 @@ class App:
         p = self.eng.pads[self.sel]
         label, beats = FITS[self.fit_idx]
         want = beats * 60.0 / self.eng.bpm
+        if self.pending_bake and self.pending_bake[0] is not p:
+            self.flush_bake()
         self.pending_bake = None
         if self.fit_keep and p.region_seconds() > STRETCH_MAX_SECONDS:
             self.say("TOO LONG TO STRETCH (%d s MAX) - TRIM OR CHOP IT" % STRETCH_MAX_SECONDS, 3.5)
@@ -838,7 +865,10 @@ class App:
         self.say("FITTED TO %s: PITCH %+d, FINE %+d" % (label, p.pitch, p.fine), 3)
 
     def spread(self):
-        """Chromatic mode: this pad's sound on every pad, one semitone apart, this pad as the root."""
+        """Chromatic mode: this pad's sound on every pad of its bank, one semitone apart, this pad as the root."""
+        if self.eng.pads[self.sel].raw is None:
+            self.say("THIS PAD HAS NO SAMPLE")
+            return
         src = self.eng.pads[self.sel]
         base = src.name.split(" ")[0][:8]
         root = self.sel - self.base()
@@ -853,13 +883,14 @@ class App:
             q.bake()
         prune_cache(self.eng.pads)
         self.page = PAGES.index("PLAY")
-        self.say("PAD %d SPREAD ACROSS THE PADS" % (self.sel + 1), 2.5)
+        self.say("PAD %d SPREAD ACROSS PADS %d-%d" % (self.sel + 1, self.base() + 1, self.base() + BANK), 2.5)
 
     def export_audio(self):
         """Render the song (or four loops of the current pattern) to samples/exports/ as a WAV file."""
         e = self.eng
         e.stop()
         self.flush_bake()
+        self.save_project(quiet=True, autosave=True)       # a long export is the riskiest moment to lose work
 
         def progress(frac):
             pygame.event.pump()
@@ -879,6 +910,11 @@ class App:
         except (OSError, ValueError, MemoryError) as err:
             self.say("EXPORT FAILED: %s" % err, 4)
             return
+        finally:
+            # Presses made while it was busy must not run afterwards; releases still count.
+            for ev in pygame.event.get():
+                if ev.type in (pygame.KEYUP, pygame.JOYBUTTONUP, pygame.CONTROLLERBUTTONUP, pygame.QUIT):
+                    self.handle_event(ev)
         self.logline("export: %s, %.1f s" % (path, len(audio) / SR))
         self.say("SAVED %d:%02d TO samples/exports/" % (len(audio) / SR // 60, len(audio) / SR % 60), 4)
 
@@ -925,7 +961,10 @@ class App:
     def rebake(self, p):
         """Re-render a pad after a setting change. Long samples wait until the value stops moving,
         because rendering them takes long enough to make the controls stutter."""
-        if p.region_seconds() > LONG_SAMPLE_SECONDS:
+        if self.pending_bake and self.pending_bake[0] is not p:
+            self.flush_bake()               # another pad is still waiting: do it now, or it would be forgotten
+        slow = abs(p.stretch - 100) > 0.05 or p.notes_wanted       # stretching and step-note copies take time
+        if p.region_seconds() > LONG_SAMPLE_SECONDS or slow:
             self.pending_bake = (p, time.time() + 0.2)
         else:
             p.bake()
@@ -1024,10 +1063,15 @@ class App:
             elif row == "NEW":
                 self.confirm = ("START A NEW PROJECT?", self.new_project)
             elif row == "RECORD MIC":
-                self.confirm = ("RECORD %d SECONDS? REPLACES ALL PADS" % REC_SECONDS, self.start_record)
+                self.confirm = ("RECORD %d SECONDS? REPLACES PADS %d-%d" % (REC_SECONDS, self.base() + 1, self.base() + BANK),
+                                self.start_record)
             elif row == "EXPORT AUDIO":
                 what = "THE SONG" if (e.song_on and e.song) else "PATTERN %s x 4" % PAT_NAMES[e.cur_pat]
-                self.confirm = ("EXPORT %s AS A WAV FILE?" % what, self.export_audio)
+                if e.offline_seconds() > EXPORT_MAX_SECONDS:
+                    self.confirm = ("%s IS %d MIN LONG. EXPORT THE FIRST %d MIN?" % (
+                        what, round(e.offline_seconds() / 60), EXPORT_MAX_SECONDS // 60), self.export_audio)
+                else:
+                    self.confirm = ("EXPORT %s AS A WAV FILE?" % what, self.export_audio)
             elif row == "RESAMPLE":
                 self.confirm = ("RESAMPLE THE OUTPUT TO PAD %d?" % (self.sel + 1), self.start_resample)
             elif row == "IMPORT CHOPS":
@@ -1073,10 +1117,11 @@ class App:
             self.say("CAN'T PLAY IT: %s" % e, 3)
             return False
         self.eng.preview(self.sel, raw)
+        self.preview_end = time.time() + len(raw) / SR
         return True
 
     def import_chops(self, project_file):
-        """Put a GrainBrick project's slices on the pads, one slice per pad, starting at pad 1."""
+        """Put a GrainBrick project's slices on the pads of the bank on screen, one slice per pad."""
         try:
             with open(project_file) as fh:
                 d = json.load(fh)
@@ -1481,7 +1526,7 @@ class App:
             for n, (_, item) in enumerate(pk["items"][top:top + 12]):
                 if item == self.previewing:
                     self.text("PLAYING", 564, 76 + n * 20, "s", ORANGE, "r")
-            self.text("A import to this bank    X play / stop    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+            self.text("A import to pads %d-%d    X play / stop    B cancel" % (self.base() + 1, self.base() + BANK), 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
         if self.live:
             lv = self.live
             pos = min(1.0, max(0.0, self.live_pos()))
@@ -1521,6 +1566,11 @@ class App:
             self.box(120, 300, 400, 24, ORANGE, None, 4)
             self.text(self.toast[:60], 320, 312, "m", DARK, "c")
         pygame.display.flip()
+
+    @staticmethod
+    def clip(s, n):
+        """Shorten text to n characters, showing that something was cut."""
+        return s if len(s) <= n else s[:n - 2].rstrip(", ") + " .."
 
     def hints(self, s):
         """Button help along the bottom, in readable type; wraps onto a second line when it has to."""
@@ -1567,7 +1617,7 @@ class App:
         p = e.pads[self.sel]
         self.box(318, 34, 314, 296, PANEL, LINE, 6)
         self.text("PAD %d" % (self.sel + 1), 330, 52, "l", ORANGE)
-        self.text(p.name[:16], 540, 53, "m", TEXT, "r")
+        self.text(p.name[:12], 540, 53, "m", TEXT, "r")
         self.bank_marker(552, 44)
         self.wave(p, 330, 70, 290, 76, TEAL, trim=p.start > 0 or p.end < 1)
         self.text("VOL %d" % round(p.vol * 100), 330, 162, "m", TEXT)
@@ -1604,7 +1654,7 @@ class App:
                   632, 37, "s", ORANGE if cur_note else DIM, "r")
         for s in range(16):
             st = view + s
-            if st % 4 == 0:
+            if st % 4 == 0 and st < length:
                 self.text(str(st + 1), gx + s * cw + cw / 2, 37, "s", DIM, "c")
         if e.playing and view <= e.step < view + 16:
             self.box(gx + (e.step - view) * cw, gy - 1, cw - 2, rh * 16 + 1, mix(BG, TEAL, 0.22), None, 2)
@@ -1638,7 +1688,7 @@ class App:
                              None, 2)
         self.box(gx + (self.cur_step - view) * cw, gy + (self.sel - first) * rh - 1, cw - 2, rh - 1, None, ORANGE, 3, 2)
         self.hints("A step (hold + move to paint)   Y accent   B mute   X solo   L2 R2 jump   "
-                   "SELECT+left right note   SELECT+L2 R2 octave   SELECT+A clear track   SELECT+X clear all")
+                   "SELECT+left right note   SELECT+L2 R2 octave   SELECT+Y bank   SELECT+A clear track   SELECT+X clear all")
 
     def draw_sound(self):
         e = self.eng
@@ -1662,7 +1712,7 @@ class App:
                 "FINE TUNE": "%+d cents" % p.fine,
                 "BIT CRUSH": "%d bit" % CRUSH_BITS[p.crush] if p.crush else "OFF",
                 "LO-FI RATE": "%.1f kHz" % (SR / 1000.0 / CRUSH_RATES[p.down]) if p.down else "OFF",
-                "STRETCH": "OFF" if abs(p.stretch - 100) < 0.05 else "%.4g%% length, same pitch" % round(p.stretch, 1),
+                "STRETCH": "OFF" if abs(p.stretch - 100) < 0.05 else "%.4g%%, same pitch" % round(p.stretch, 1),
                 "FIT STYLE": "KEEP PITCH (stretch)" if self.fit_keep else "CHANGE PITCH (classic)",
                 "MODE": MODES[p.mode] + ("", "  (plays while held)", "  (hit to start, hit to stop)")[p.mode],
                 "REVERSE": "ON" if p.rev else "OFF",
@@ -1739,10 +1789,10 @@ class App:
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
                 "MIDI OUT": ("channel %d  -  pads send notes, plus clock" % self.midi.out_channel) if self.midi.out_channel
                             else "OFF",
-                "MIDI DEVICES": (", ".join(self.midi.devices)[:40] or "none found  -  plug one in") if self.midi.running
+                "MIDI DEVICES": (self.clip(", ".join(self.midi.devices), 40) or "none found  -  plug one in") if self.midi.running
                                 else self.midi.error or "off",
                 "MASTER": "%d" % round(e.master * 100), "QUIT": "save and exit",
-                "RECORD MIC": "%d s from the mic, chopped onto pads" % REC_SECONDS,
+                "RECORD MIC": "%d s from the mic, chopped onto pads %d-%d" % (REC_SECONDS, self.base() + 1, self.base() + BANK),
                 "RESAMPLE": "record what you hear onto pad %d" % (self.sel + 1),
                 "EXPORT AUDIO": "save %s as a WAV file" % ("the song" if (e.song_on and e.song)
                                                            else "pattern %s x 4" % PAT_NAMES[e.cur_pat]),
@@ -1833,32 +1883,51 @@ class App:
     KNOBS = [("vol", 0.0, 1.5, False), ("pitch", -24, 24, True), ("filt", -100, 100, True), ("dsend", 0.0, 1.0, False),
              ("rsend", 0.0, 1.0, False), ("start", 0.0, 0.98, True), ("end", 0.02, 1.0, True), ("fout", 0, 2000, True)]
 
+    # Controller numbers that are not knobs: bank select, mod wheel, data entry, channel volume, pedals
+    # and the channel-mode messages (120-127, such as "all notes off", which many controllers send on stop).
+    NOT_KNOBS = frozenset([0, 1, 6, 7, 32, 38] + list(range(64, 70)) + list(range(96, 102)) + list(range(120, 128)))
+    KNOB_NAMES = ["VOLUME", "PITCH", "FILTER", "DELAY", "REVERB", "START", "END", "FADE OUT"]
+
     def tick_midi(self):
         """Feed the MIDI port what it needs for clock, and act on what controllers sent."""
         e, m = self.eng, self.midi
         m.bpm, m.playing = e.bpm, e.playing
         m.latency = (e.queue_blocks + 1) * BLOCK / SR
+        if len(m.devices) < self.midi_seen:         # a controller was unplugged: let go of whatever it held
+            for pad in self.midi_held.values():
+                e.note_off(pad)
+            self.midi_held.clear()
+        self.midi_seen = len(m.devices)
         for ev in m.poll():
             if ev[0] == "note" and 0 <= ev[1] - midi.BASE_NOTE < NPADS:
                 pad = ev[1] - midi.BASE_NOTE
-                self.sel = pad
-                e.trigger(pad, min(1.3, max(0.3, ev[2] / 100.0)))
+                if not self.modal():                # a dialog names its pads: do not move them under it
+                    if pad != self.sel:
+                        self.flush_bake()
+                    self.sel = pad
+                # echo=False: a note that came in is not sent back out, or a device with "thru" would loop
+                e.trigger(pad, min(1.3, max(0.3, ev[2] / 100.0)), echo=False)
                 if e.pads[pad].mode == HOLD:
                     self.midi_held[ev[1]] = pad
             elif ev[0] == "off" and ev[1] in self.midi_held:
                 e.note_off(self.midi_held.pop(ev[1]))
-            elif ev[0] == "cc":
+            elif ev[0] == "cc" and ev[1] not in self.NOT_KNOBS and not self.modal():
+                # The first eight knobs turned, in the order they were first turned, are the eight settings.
                 if ev[1] not in self.midi_ccs:
-                    self.midi_ccs = sorted(self.midi_ccs + [ev[1]])[:64]
+                    if len(self.midi_ccs) >= len(self.KNOBS):
+                        continue
+                    self.midi_ccs.append(ev[1])
                 k = self.midi_ccs.index(ev[1])
-                if k < len(self.KNOBS):
-                    attr, lo, hi, bake = self.KNOBS[k]
-                    p = e.pads[self.sel]
-                    v = lo + (hi - lo) * min(127, max(0, ev[2])) / 127.0
-                    setattr(p, attr, int(round(v)) if isinstance(lo, int) else round(v, 3))
-                    p.start, p.end = min(p.start, 0.98), max(p.end, min(1.0, p.start + 0.02))
-                    if bake and p.raw is not None:
-                        self.pending_bake = (p, time.time() + 0.15)     # wait until the knob stops turning
+                attr, lo, hi, bake = self.KNOBS[k]
+                p = e.pads[self.sel]
+                v = lo + (hi - lo) * min(127, max(0, ev[2])) / 127.0
+                setattr(p, attr, int(round(v)) if isinstance(lo, int) else round(v, 3))
+                p.start, p.end = min(p.start, 0.98), max(p.end, min(1.0, p.start + 0.02))
+                self.say("KNOB %d: %s, PAD %d" % (k + 1, self.KNOB_NAMES[k], self.sel + 1), 1.2)
+                if bake and p.raw is not None:
+                    if self.pending_bake and self.pending_bake[0] is not p:
+                        self.flush_bake()
+                    self.pending_bake = (p, time.time() + 0.15)     # wait until the knob stops turning
             elif ev[0] == "start" and not e.playing:
                 e.play()
             elif ev[0] == "stop" and e.playing:
@@ -1866,6 +1935,12 @@ class App:
 
     # ------------------------------------------------------------ main loop
     def run(self):
+        try:
+            self.loop()
+        finally:                                    # even after an error, what was made is saved
+            self.save_project(quiet=True, autosave=True)
+
+    def loop(self):
         clock = pygame.time.Clock()
         while self.running:
             for ev in pygame.event.get():
@@ -1880,8 +1955,9 @@ class App:
                 self.finish_resample()
             self.run_script()
             self.draw()
+            if self.previewing and time.time() >= self.preview_end:
+                self.previewing = None
             clock.tick(30)
-        self.save_project(quiet=True, autosave=True)
         if self.eng.render_errors:
             self.logline("render errors: %d, first:\n%s" % (self.eng.render_errors, self.eng.last_error))
         self.logline("exit: dropouts=%d peak_render=%.1fms" % (self.eng.underruns, self.eng.max_render_ms))

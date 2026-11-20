@@ -18,7 +18,8 @@ from collections import deque
 
 NOTE_ON, NOTE_OFF, CONTROLLER = 6, 7, 10
 START, CONTINUE, STOP, CLOCK = 30, 31, 32, 36
-CAP_READ, CAP_WRITE, CAP_SUBS_READ, CAP_SUBS_WRITE = 1, 2, 32, 64
+CAP_READ, CAP_WRITE, CAP_SUBS_READ, CAP_SUBS_WRITE, CAP_NO_EXPORT = 1, 2, 32, 64, 128
+EBUSY = 16
 PORT_TYPE = (1 << 1) | (1 << 20)          # generic MIDI, application
 OPEN_DUPLEX, NONBLOCK = 3, 1
 SUBSCRIBERS, UNKNOWN, QUEUE_DIRECT = 254, 253, 253
@@ -55,7 +56,7 @@ class MidiPort:
     def __init__(self, log=lambda msg: None):
         self.log = log
         self.events = deque(maxlen=512)    # decoded input, for the UI thread
-        self.out = deque(maxlen=512)       # (due time, event type, channel, note, velocity)
+        self.out = deque(maxlen=512)       # note-ons waiting to go: (due time, channel, note, velocity)
         self.devices = []                  # names of connected devices
         self.error = ""
         self.out_channel = 0               # 0 = sending off, 1-16 = channel
@@ -65,6 +66,7 @@ class MidiPort:
         self.port = -1
         self.running = False
         self._linked = set()
+        self._wake = threading.Event()     # set on shutdown so the thread stops waiting at once
 
     # ----- setup
     def start(self):
@@ -72,8 +74,7 @@ class MidiPort:
         try:
             name = ctypes.util.find_library("asound") or "libasound.so.2"
             lib = ctypes.CDLL(name)
-            for fn in ("snd_seq_port_info_get_name", "snd_seq_client_info_get_name"):
-                getattr(lib, fn).restype = ctypes.c_char_p
+            lib.snd_seq_client_info_get_name.restype = ctypes.c_char_p
             seq = ctypes.c_void_p()
             if lib.snd_seq_open(ctypes.byref(seq), b"default", OPEN_DUPLEX, NONBLOCK) < 0:
                 raise OSError("the ALSA sequencer would not open")
@@ -112,17 +113,18 @@ class MidiPort:
                 while lib.snd_seq_query_next_port(seq, pinfo) >= 0:
                     port = lib.snd_seq_port_info_get_port(pinfo)
                     caps = lib.snd_seq_port_info_get_capability(pinfo)
+                    if caps & CAP_NO_EXPORT:            # the port asks not to be connected to
+                        continue
                     usable = False
-                    if caps & CAP_READ and caps & CAP_SUBS_READ:
-                        usable = True
-                        if (client, port, "in") not in self._linked:
-                            lib.snd_seq_connect_from(seq, self.port, client, port)
-                        found.add((client, port, "in"))
-                    if caps & CAP_WRITE and caps & CAP_SUBS_WRITE:
-                        usable = True
-                        if (client, port, "out") not in self._linked:
-                            lib.snd_seq_connect_to(seq, self.port, client, port)
-                        found.add((client, port, "out"))
+                    for way, need, connect in (("in", CAP_READ | CAP_SUBS_READ, lib.snd_seq_connect_from),
+                                               ("out", CAP_WRITE | CAP_SUBS_WRITE, lib.snd_seq_connect_to)):
+                        if caps & need != need:
+                            continue
+                        key = (client, port, way)
+                        # A failed connection is left out of `found`, so the next scan tries it again.
+                        if key in self._linked or connect(seq, self.port, client, port) in (0, -EBUSY):
+                            found.add(key)
+                            usable = True
                     if usable and cname not in names:
                         names.append(cname)
         finally:
@@ -134,18 +136,17 @@ class MidiPort:
 
     # ----- output (called from the UI or audio thread; only queues)
     def note(self, pad, velocity=1.0, offset=0):
-        if self.out_channel and self.running:
+        ch = self.out_channel
+        if ch and self.running:
             n = int(min(127, max(0, BASE_NOTE + pad + offset)))
-            due = time.perf_counter() + self.latency
-            self.out.append((due, NOTE_ON, n, int(min(127, max(1, velocity * 100)))))
-            self.out.append((due + NOTE_LENGTH, NOTE_OFF, n, 0))
+            self.out.append((time.perf_counter() + self.latency, ch, n, int(min(127, max(1, velocity * 100)))))
 
-    def _send(self, ev_type, note=0, velocity=0):
+    def _send(self, ev_type, channel=1, note=0, velocity=0):
         ev = Event()
         ev.type, ev.queue = ev_type, QUEUE_DIRECT
         ev.src_port, ev.dst_client, ev.dst_port = self.port, SUBSCRIBERS, UNKNOWN
         if ev_type in (NOTE_ON, NOTE_OFF):
-            ev.data[0], ev.data[1], ev.data[2] = self.out_channel - 1, note, velocity
+            ev.data[0], ev.data[1], ev.data[2] = channel - 1, note, velocity
         self.lib.snd_seq_event_output_direct(self.seq, ctypes.byref(ev))
 
     # ----- the MIDI thread
@@ -153,7 +154,8 @@ class MidiPort:
         lib, seq = self.lib, self.seq
         evp = ctypes.POINTER(Event)()
         next_scan = 0.0
-        was_playing, next_tick, pending = False, 0.0, []
+        clock_on, next_tick, start_at = False, 0.0, None
+        offs = {}                                  # (channel, note) -> when its note-off is due
         while self.running:
             now = time.perf_counter()
             try:
@@ -164,35 +166,52 @@ class MidiPort:
                     got = decode(evp.contents.type, evp.contents.data)
                     if got:
                         self.events.append(got)
-                if self.out_channel:
-                    # Clock: 24 ticks per beat while the sequencer runs, started and stopped with it.
-                    if self.playing and not was_playing:
-                        pending.append((now + self.latency, START))
-                        next_tick = now + self.latency
-                    elif was_playing and not self.playing:
-                        pending.append((now + self.latency, STOP))
-                    was_playing = self.playing
-                    while pending and pending[0][0] <= now:
-                        self._send(pending.pop(0)[1])
-                    if self.playing and now >= next_tick:
-                        self._send(CLOCK)
-                        next_tick = max(next_tick + 60.0 / self.bpm / 24.0, now - 0.05)
-                    late = []
-                    while self.out:
-                        item = self.out.popleft()
-                        if item[0] <= now:
-                            self._send(item[1], item[2], item[3])
-                        else:
-                            late.append(item)
-                    self.out.extend(late)
-                else:
-                    was_playing = False
-                    self.out.clear()
+                sending = bool(self.out_channel)
+                # Clock: 24 ticks per beat while the sequencer runs, started and stopped with it.
+                # It is timed by this computer's clock, not the sound card's, so it can drift slowly.
+                want = sending and self.playing
+                if want and not clock_on:
+                    clock_on, start_at = True, now + self.latency
+                elif clock_on and not want:
+                    clock_on, start_at = False, None
+                    self._send(STOP)
+                if start_at is not None and now >= start_at:
+                    self._send(START)
+                    next_tick, start_at = now, None
+                if clock_on and start_at is None and now >= next_tick:
+                    self._send(CLOCK)
+                    next_tick = max(next_tick + 60.0 / self.bpm / 24.0, now - 0.05)
+                # Notes: a note-off always goes out on the channel its note-on used, and a note that is
+                # played again before its note-off is due gets that note-off first.
+                later = []
+                while self.out:
+                    item = self.out.popleft()
+                    if not sending:
+                        continue
+                    if item[0] > now:
+                        later.append(item)
+                        continue
+                    key = (item[1], item[2])
+                    if key in offs:
+                        self._send(NOTE_OFF, item[1], item[2])
+                    self._send(NOTE_ON, item[1], item[2], item[3])
+                    offs[key] = now + NOTE_LENGTH
+                self.out.extend(later)
+                for key in [k for k, due in offs.items() if due <= now or not sending]:
+                    self._send(NOTE_OFF, key[0], key[1])
+                    del offs[key]
             except Exception as e:                 # MIDI must never take the app down
                 self.error = "%s: %s" % (type(e).__name__, e)
                 self.log("midi error: %s" % self.error)
-                time.sleep(1.0)
-            time.sleep(0.001)
+                self._wake.wait(1.0)
+            self._wake.wait(0.002)
+        try:                                       # leave nothing hanging on the gear we were driving
+            for key in offs:
+                self._send(NOTE_OFF, key[0], key[1])
+            if clock_on:
+                self._send(STOP)
+        except Exception:
+            pass
 
     def poll(self):
         """Incoming events since the last call."""
@@ -203,14 +222,12 @@ class MidiPort:
 
     def stop(self):
         self.running = False
+        self._wake.set()
         thread = getattr(self, "thread", None)
         if thread is not None:
-            thread.join(timeout=0.5)
+            thread.join(timeout=1.5)
+            if thread.is_alive():              # never close the sequencer under a thread still using it
+                return
         if self.seq:
-            if self.out_channel:
-                try:
-                    self._send(STOP)
-                except Exception:
-                    pass
             self.lib.snd_seq_close(self.seq)
             self.seq = None

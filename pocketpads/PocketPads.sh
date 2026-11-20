@@ -1,5 +1,5 @@
 #!/bin/sh
-# PocketPads: 16-pad sample sequencer
+# PocketPads: sample sequencer
 # The app folder sits next to this script (on KNULLI: /userdata/roms/ports/pocketpads).
 PORTS="$(cd "$(dirname "$0")" && pwd)"
 APPDIR="$PORTS/pocketpads"

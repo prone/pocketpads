@@ -79,4 +79,24 @@ assert abs(len(a) / _e.SR - 6.5) < 0.02 and _np.abs(a[:_e.SR]).max() > 0.1 and _
 g.song, g.song_on = [0, 1, 1], True; g.patterns[1]["length"] = 32
 a = g.render_offline(); print("exported song: %.2f s (want 12.5)" % (len(a) / _e.SR))
 assert abs(len(a) / _e.SR - 12.5) < 0.02 and not g.playing
+# --- regressions from the second code review
+# an export must not let the next bar's first hit into its tail, at tempos where the bar length rounds up
+k = _e.Engine(); k.pads[0].load(_kit.ensure_kit(_os.path.join(_d, "kit"))[0]); k.patterns[0]["steps"][0][0] = 1
+for bpm in (97, 93, 133, 120):
+    k.bpm = bpm; a = k.render_offline(loops=4); bar = int(4 * 16 * k.step_frames())
+    assert _np.abs(a[bar + 2000:]).max() < 0.05, ("stray hit after the end at %d BPM" % bpm)
+# step notes survive the pad being reloaded, and unchanged note copies are reused rather than rebuilt
+k.set_note(0, 0, 0, 7); v = k.pads[0].variants[7]
+k.patterns[0]["steps"][0][4] = 1; k.set_note(0, 0, 4, 3); assert k.pads[0].variants[7] is v
+path = k.pads[0].path; k.pads[0].clear(); k.pads[0].load(path); assert set(k.pads[0].variants) == {3, 7}
+# the live engine is untouched by an export, and shares its audio instead of copying it
+before = k.pads[0].buf; k.render_offline(loops=1); assert k.pads[0].buf is before and not k.playing
+# a pattern shortened under the playhead in song mode moves on down the chain
+k.song, k.song_on = [0, 1], True; k.patterns[0]["length"] = 64; k.play()
+while k.step < 20: k.render(BLOCK)
+k.patterns[0]["length"] = 16
+for _ in range(40): k.render(BLOCK)
+assert k.cur_pat == 1, k.cur_pat
+k.stop()
+print("review regressions: export tail clean, step notes kept, song moves on")
 print("ALL OK")

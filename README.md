@@ -93,6 +93,8 @@ Each prints a line ending in `OK` when it passes.
 - Stretch works on samples up to 30 seconds and pauses briefly while it renders (about 0.16 s per second of audio on the Smart Pro).
 - MIDI has not been tried with real controllers yet, and Bluetooth MIDI devices are not connected automatically.
 - Projects are numbered, not named.
+- An export is five minutes at most.
+- The MIDI clock is timed by the system clock, not the sound card, so gear synced to it can drift over a long song.
 
 ## Contributing
 

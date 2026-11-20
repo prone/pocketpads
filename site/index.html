@@ -360,7 +360,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <li><b>Record.</b> Ten seconds from the built-in microphone, cut at each hit and placed on the pads.</li>
         <li><b>Resample.</b> Records what PocketPads itself is playing, effects included, onto the selected pad. Press START to finish.</li>
         <li><b>Tempo and Swing.</b> 40 to 300 BPM. Swing uses the MPC scale: 50% is straight, 66% is a triplet shuffle, 75% is the most it goes.</li>
-        <li><b>Export audio.</b> Saves the song, or four rounds of the current pattern, as a WAV file in <code>samples/exports/</code>.</li>
+        <li><b>Export audio.</b> Saves the song, or four rounds of the current pattern, as a WAV file in <code>samples/exports/</code>. Five minutes at most.</li>
         <li><b>Master.</b> Overall output level.</li>
         <li><b>MIDI out and MIDI devices.</b> See <a href="#midi">MIDI</a> below.</li>
         <li><b>Import Chops and GrainBrick.</b> The link to GrainBrick, <a href="#grainbrick">described below</a>.</li>
@@ -393,7 +393,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   <p>Plug a USB MIDI controller into the handheld and PocketPads connects to it by itself; the MIDI DEVICES row on the PROJ page shows what it found. This part is new and has not yet been tried with real hardware, so expect rough edges.</p>
   <ul>
     <li><b>Pads and keys.</b> Notes from C1 (note 36) upward play pads 1 to 64, with velocity.</li>
-    <li><b>Knobs.</b> The first eight knobs, in the order of their controller numbers, set the selected pad's volume, pitch, filter, delay, reverb, start, end and fade out.</li>
+    <li><b>Knobs.</b> The first eight knobs you turn become, in the order you first turn them, the selected pad's volume, pitch, filter, delay, reverb, start, end and fade out. A message names the setting as you turn.</li>
     <li><b>MIDI out.</b> Choose a channel on the PROJ page and every pad that sounds also sends a note, with step notes included, so the sequencer can play an external synth. Clock, start and stop go out too, to keep other gear in time.</li>
     <li><b>Start and stop</b> from a controller start and stop the beat.</li>
   </ul>
