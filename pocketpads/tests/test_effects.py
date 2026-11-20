@@ -67,7 +67,7 @@ print("low-pass sweep highs: %.3f -> %.3f -> back %.3f" % (hf(before), hf(x), hf
 e.perf["hp"] = True; run(e, 1.5); x = run(e, 1.0); e.perf["hp"] = False; print("high-pass sweep level %.3f -> %.3f" % (rms(before), rms(x))); assert rms(x) < 0.6*rms(before)
 
 # cost with everything on
-e = fresh(); e.patterns[0]["steps"] = [[1]*32 for _ in range(16)]
+e = fresh(); e.patterns[0]["steps"][:16] = [[1]*128 for _ in range(16)]
 for p in e.pads: p.dsend = p.rsend = 0.3
 e.perf["lp"] = True; e.play(); run(e, 0.5); t0 = time.perf_counter(); N = 300
 for _ in range(N): e.render_pcm(BLOCK)

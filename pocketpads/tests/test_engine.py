@@ -7,7 +7,7 @@ d = tempfile.mkdtemp()
 paths = kit.ensure_kit(os.path.join(d, "kit"))
 e = Engine()
 for p, path in zip(e.pads, paths): p.load(path)
-print("kit:", [(p.name, round(p.seconds(),2), round(float(np.abs(p.raw).max()),2)) for p in e.pads][:4], "...")
+print("kit:", [(p.name, round(p.seconds(),2), round(float(np.abs(p.raw).max()),2)) for p in e.pads[:4]], "...")
 kit.demo_patterns(e.patterns)
 e.bpm = 120
 # sequencer timing: kick on steps 0,4,8,12 -> onsets every 0.5 s
@@ -20,7 +20,7 @@ print("kick onsets (s):", [round(i/SR,4) for i in on])
 assert len(on) >= 4 and all(abs((on[k]-on[0])/SR - 0.5*k) < 0.002 for k in range(4)), "timing off"
 # all pads, speed
 for p in e.pads: p.mute = False
-e.patterns[0]["steps"] = [[1]*32 for _ in range(16)]
+e.patterns[0]["steps"][:16] = [[1]*128 for _ in range(16)]
 t0=time.perf_counter(); N=400
 for _ in range(N): e.render_pcm(BLOCK)
 dt=(time.perf_counter()-t0)/N*1000

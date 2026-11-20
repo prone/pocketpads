@@ -37,7 +37,9 @@ import numpy as np
 
 SR = 44100
 BLOCK = 512
-NPADS = 16
+BANK = 16                            # pads shown at once
+NBANKS = 4
+NPADS = BANK * NBANKS                # 64 pads in all
 NPAT = 8
 PAT_NAMES = "ABCDEFGH"
 MIN_STEPS, MAX_STEPS = 16, 128

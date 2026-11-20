@@ -17,7 +17,7 @@ import pygame
 
 import kit
 import midi
-from engine import (APP_DIR, BLOCK, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NPADS, NPAT,
+from engine import (APP_DIR, BANK, BLOCK, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NBANKS, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
@@ -427,10 +427,28 @@ class App:
             else:
                 self.page = (self.page + d) % len(PAGES)
             return
+        if sel and b == "Y":
+            self.flush_bake()
+            self.sel = (self.sel + BANK) % NPADS
+            self.say("BANK %d: PADS %d-%d" % (self.sel // BANK + 1, self.base() + 1, self.base() + BANK), 1.5)
+            return
         if sel and b in ("up", "down"):
             e.bpm = float(min(300, max(40, round(e.bpm) + (1 if b == "up" else -1))))
             return
         getattr(self, "press_" + PAGES[self.page].lower())(b, sel)
+
+    def base(self):
+        """Index of the first pad in the bank on screen (the bank the selected pad is in)."""
+        return self.sel // BANK * BANK
+
+    def bank_pads(self):
+        b = self.base()
+        return self.eng.pads[b:b + BANK]
+
+    def step_pad(self, d):
+        """Select the previous or next pad, staying inside the bank."""
+        b = self.base()
+        self.sel = b + (self.sel - b + d) % BANK
 
     def press_play(self, b, sel):
         e = self.eng
@@ -438,7 +456,7 @@ class App:
             if mod in self.held and b in DRUM_KEYS:
                 if self.is_repeat:          # a held d-pad auto-repeats for menus; a drum hit must not
                     return
-                i = base + DRUM_KEYS.index(b)
+                i = self.base() + base + DRUM_KEYS.index(b)
                 self.sel = i
                 self.hit(i, b)
                 return
@@ -449,12 +467,12 @@ class App:
             e.repeat_div = (e.repeat_div + (1 if b == "right" else -1)) % len(RATES)
             self.say("REPEAT RATE %s" % RATES[e.repeat_div][0], 1.0)
         elif b in DIRS:
-            r, c = divmod(self.sel, 4)
+            r, c = divmod(self.sel % BANK, 4)
             if b == "up": r = (r - 1) % 4
             if b == "down": r = (r + 1) % 4
             if b == "left": c = (c - 1) % 4
             if b == "right": c = (c + 1) % 4
-            self.sel = r * 4 + c
+            self.sel = self.base() + r * 4 + c
         elif b == "A":
             self.hit(self.sel, b)
         elif b == "B":
@@ -494,9 +512,9 @@ class App:
             if not e.playing:
                 e.preview(self.sel, e.pads[self.sel].variants.get(notes[self.cur_step], e.pads[self.sel].buf))
         elif b == "up":
-            self.sel = (self.sel - 1) % NPADS
+            self.step_pad(-1)
         elif b == "down":
-            self.sel = (self.sel + 1) % NPADS
+            self.step_pad(1)
         elif b in ("left", "right", "l2", "r2"):
             d = {"left": -1, "right": 1, "l2": -4, "r2": 4}[b]
             if self.paint is not None and "A" in self.held:
@@ -656,9 +674,9 @@ class App:
         e = self.eng
         p = e.pads[self.sel]
         if sel and b in ("left", "right"):
-            self.sel = (self.sel + (1 if b == "right" else -1)) % NPADS
+            self.step_pad(1 if b == "right" else -1)
         elif b in ("l2", "r2"):
-            self.sel = (self.sel + (1 if b == "r2" else -1)) % NPADS
+            self.step_pad(1 if b == "r2" else -1)
         elif b == "up":
             self.sound_row = (self.sound_row - 1) % len(self.SOUND_ROWS)
         elif b == "down":
@@ -736,7 +754,7 @@ class App:
             elif row == "SPREAD" and p.region_seconds() > SPREAD_MAX_SECONDS:
                 self.say("TOO LONG TO SPREAD (%d s MAX) - TRIM OR CHOP IT" % SPREAD_MAX_SECONDS, 3.5)
             elif row == "SPREAD":
-                self.confirm = ("SPREAD PAD %d ACROSS ALL 16 PADS?" % (self.sel + 1), self.spread)
+                self.confirm = ("SPREAD PAD %d ACROSS PADS %d-%d?" % (self.sel + 1, self.base() + 1, self.base() + BANK), self.spread)
             else:
                 self.toggle_audition()
         elif b == "X":
@@ -760,12 +778,12 @@ class App:
         else:
             n = len(p.raw)
             seg = p.raw[int(a * n):max(int(a * n) + 16, int(z * n))]
-            slices = [(a + (z - a) * s, a + (z - a) * t) for s, t in find_chops(seg, NPADS)]
+            slices = [(a + (z - a) * s, a + (z - a) * t) for s, t in find_chops(seg, BANK)]
         if len(slices) < 2:
             self.say("ONLY ONE HIT FOUND - TRY EQUAL OR LIVE", 3)
             return
         path = p.path
-        self.confirm = ("CHOP INTO %d? REPLACES PADS 1-%d" % (len(slices), len(slices)),
+        self.confirm = ("CHOP INTO %d? REPLACES PADS %d-%d" % (len(slices), self.base() + 1, self.base() + len(slices)),
                         lambda: self.put_slices(path, slices) and self.say("%d CHOPS ON THE PADS" % len(slices), 2.5))
 
     def live_pos(self):
@@ -775,7 +793,7 @@ class App:
     def live_mark(self):
         lv = self.live
         pos = min(0.999, max(0.0, self.live_pos()))
-        if len(lv["marks"]) < NPADS and (not lv["marks"] or pos - lv["marks"][-1] > 0.03 * SR / lv["n"]):
+        if len(lv["marks"]) < BANK and (not lv["marks"] or pos - lv["marks"][-1] > 0.03 * SR / lv["n"]):
             lv["marks"].append(pos)
 
     def live_finish(self, cancel=False):
@@ -823,14 +841,15 @@ class App:
         """Chromatic mode: this pad's sound on every pad, one semitone apart, this pad as the root."""
         src = self.eng.pads[self.sel]
         base = src.name.split(" ")[0][:8]
-        for i, q in enumerate(self.eng.pads):
+        root = self.sel - self.base()
+        for i, q in enumerate(self.bank_pads()):
             if q is src:
                 continue
             q.clear()
             q.raw, q.peaks, q.path = src.raw, src.peaks, src.path
             q.copy_settings(src)
-            q.pitch = int(min(24, max(-24, src.pitch + i - self.sel)))
-            q.name = "%s %+d" % (base, i - self.sel)
+            q.pitch = int(min(24, max(-24, src.pitch + i - root)))
+            q.name = "%s %+d" % (base, i - root)
             q.bake()
         prune_cache(self.eng.pads)
         self.page = PAGES.index("PLAY")
@@ -1070,13 +1089,13 @@ class App:
             self.say("IMPORT FAILED: %s" % e, 4)
             return
         total = len(slices)
-        if not self.put_slices(path, slices[:NPADS]):
+        if not self.put_slices(path, slices[:BANK]):
             return
-        extra = "  (FIRST 16 OF %d)" % total if total > NPADS else ""
-        self.say("IMPORTED %d CHOPS%s" % (min(total, NPADS), extra), 3)
+        extra = "  (FIRST 16 OF %d)" % total if total > BANK else ""
+        self.say("IMPORTED %d CHOPS%s" % (min(total, BANK), extra), 3)
 
     def put_slices(self, path, slices):
-        """One slice per pad, starting at pad 1. Returns False (and changes nothing) if the file is gone."""
+        """One slice per pad, from the first pad of the bank on screen. Returns False (and changes nothing) if the file is gone."""
         try:
             load_cached(path)
         except (OSError, ValueError) as e:
@@ -1084,15 +1103,14 @@ class App:
             return False
         self.eng.stop()
         self.pending_bake = None
-        for p, (a, z) in zip(self.eng.pads, slices):
+        for i, (p, (a, z)) in enumerate(zip(self.bank_pads(), slices)):
             p.clear()
             p.load(path)
             p.start, p.end = a, z
             p.bake()
-        for i, p in enumerate(self.eng.pads[:len(slices)]):
             p.name = "CHOP %d" % (i + 1)
         prune_cache(self.eng.pads)
-        self.sel, self.page = 0, PAGES.index("PLAY")
+        self.sel, self.page = self.base(), PAGES.index("PLAY")
         return True
 
     @staticmethod
@@ -1166,7 +1184,7 @@ class App:
                 raise ValueError("no sound was captured")
             write_wav(path, mono / peak * 0.9)
             raw, _ = load_cached(path)
-            slices = find_chops(raw, NPADS)
+            slices = find_chops(raw, BANK)
         except (OSError, ValueError) as e:
             self.logline("record failed: %s | %s" % (e, err))
             busy = "busy" in err.lower()
@@ -1178,7 +1196,7 @@ class App:
             return
         if not self.put_slices(path, slices):
             return
-        for p in self.eng.pads[len(slices):]:
+        for p in self.bank_pads()[len(slices):]:
             p.clear()
         self.logline("record ok: %.1f s peak %.3f, %d chops" % (len(mono) / 44100.0, peak, len(slices)))
         self.say("RECORDED %d CHOPS ONTO THE PADS" % len(slices), 3)
@@ -1463,13 +1481,13 @@ class App:
             for n, (_, item) in enumerate(pk["items"][top:top + 12]):
                 if item == self.previewing:
                     self.text("PLAYING", 564, 76 + n * 20, "s", ORANGE, "r")
-            self.text("A import to pads 1-16    X play / stop    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+            self.text("A import to this bank    X play / stop    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
         if self.live:
             lv = self.live
             pos = min(1.0, max(0.0, self.live_pos()))
             self.box(20, 60, 600, 250, PANEL, ORANGE, 6, 2)
             self.text("LIVE CHOP", 36, 80, "l", ORANGE)
-            self.text("%d of %d slice points" % (len(lv["marks"]), NPADS), 604, 81, "m", TEXT, "r")
+            self.text("%d of %d slice points" % (len(lv["marks"]), BANK), 604, 81, "m", TEXT, "r")
             self.box(36, 100, 568, 150, DARK, LINE, 4)
             cols = len(lv["peaks"])
             for i in range(cols):
@@ -1516,12 +1534,22 @@ class App:
         self.text("    ".join(parts[:best]), 320, 338, "h", color, "c")
         self.text("    ".join(parts[best:]), 320, 353, "h", color, "c")
 
+    def bank_marker(self, x, y, small=False):
+        """Four squares showing which bank of pads is on screen."""
+        cur = self.sel // BANK
+        w = 12 if small else 17
+        for n in range(NBANKS):
+            on = n == cur
+            self.box(x + n * (w + 2), y, w, 14 if small else 18, ORANGE if on else DARK, None if on else LINE, 3)
+            self.text(str(n + 1), x + n * (w + 2) + w / 2, y + (7 if small else 9), "s", DARK if on else DIM, "c")
+
     def draw_play(self):
         e = self.eng
         now = time.time()
         drum = 0 if "l2" in self.held else (8 if "r2" in self.held else None)
-        for i, p in enumerate(e.pads):
-            r, c = divmod(i, 4)
+        first = self.base()
+        for i, p in enumerate(self.bank_pads(), first):
+            r, c = divmod(i - first, 4)
             x, y = 8 + c * 75, 34 + r * 75
             glow = max(0.0, 1.0 - (now - e.pad_flash[i]) / 0.18)
             base = PANEL if p.buf is not None else DARK
@@ -1532,14 +1560,15 @@ class App:
             self.text(p.name[:9], x + 36, y + 56, "s", col, "c")
             if p.mute:
                 self.text("MUTE", x + 64, y + 13, "s", RED, "r")
-            if drum is not None and drum <= i < drum + 8:
-                k = DRUM_KEYS[i - drum]
+            if drum is not None and drum <= i - first < drum + 8:
+                k = DRUM_KEYS[i - first - drum]
                 self.box(x + 22, y + 22, 28, 22, ORANGE, None, 4)
                 self.text(DRUM_GLYPH.get(k, k), x + 36, y + 33, "m", DARK, "c")
         p = e.pads[self.sel]
         self.box(318, 34, 314, 296, PANEL, LINE, 6)
         self.text("PAD %d" % (self.sel + 1), 330, 52, "l", ORANGE)
-        self.text(p.name[:22], 624, 53, "m", TEXT, "r")
+        self.text(p.name[:16], 540, 53, "m", TEXT, "r")
+        self.bank_marker(552, 44)
         self.wave(p, 330, 70, 290, 76, TEAL, trim=p.start > 0 or p.end < 1)
         self.text("VOL %d" % round(p.vol * 100), 330, 162, "m", TEXT)
         self.text("PITCH %+d" % p.pitch, 420, 162, "m", TEXT)
@@ -1551,13 +1580,12 @@ class App:
             self.text("CHOKE %d" % p.choke, 620, 183, "s", DIM, "r")
         lines = ["A  play pad          B  mute pad",
                  "X  record on/off     Y  sound + samples",
-                 "Hold L2: buttons play pads 1-8",
-                 "Hold R2: buttons play pads 9-16",
+                 "Hold L2 or R2: buttons play 8 pads each",
                  "START  play/stop     L1 R1  page",
                  "SELECT + L1 R1  pattern A-H",
                  "SELECT + up down  tempo",
                  "SELECT + X  note repeat on/off",
-                 "SELECT + left right  repeat rate"]
+                 "SELECT + left right  repeat rate", "SELECT + Y  next bank of pads"]
         for i, s in enumerate(lines):
             self.text(s, 330, 200 + i * 15, "h", mix(DIM, TEXT, 0.6))
         self.hints("SELECT + START  quit (saves the project)")
@@ -1570,15 +1598,20 @@ class App:
         view = (self.cur_step // 16) * 16
         gx, gy, cw, rh = 96, 46, 33.5, 17.8
         any_solo = any(p.solo for p in e.pads)
-        self.text("%s  %d-%d of %d" % (PAT_NAMES[e.cur_pat], view + 1, min(length, view + 16), length), 8, 37, "s", DIM)
+        self.text(PAT_NAMES[e.cur_pat], 8, 37, "s", DIM)
+        cur_note = pat["notes"][self.sel][self.cur_step] if pat["steps"][self.sel][self.cur_step] else 0
+        self.text("%s%d-%d of %d" % ("NOTE %+d    " % cur_note if cur_note else "", view + 1, min(length, view + 16), length),
+                  632, 37, "s", ORANGE if cur_note else DIM, "r")
         for s in range(16):
             st = view + s
             if st % 4 == 0:
                 self.text(str(st + 1), gx + s * cw + cw / 2, 37, "s", DIM, "c")
         if e.playing and view <= e.step < view + 16:
             self.box(gx + (e.step - view) * cw, gy - 1, cw - 2, rh * 16 + 1, mix(BG, TEAL, 0.22), None, 2)
-        for i, p in enumerate(e.pads):
-            y = gy + i * rh
+        first = self.base()
+        self.bank_marker(96 - 74, 30, small=True)
+        for i, p in enumerate(self.bank_pads(), first):
+            y = gy + (i - first) * rh
             silent = p.mute or (any_solo and not p.solo) or p.buf is None
             if i == self.sel:
                 self.box(4, y, 88, rh - 2, PANEL, None, 2)
@@ -1603,10 +1636,7 @@ class App:
                 else:
                     self.box(x + 2, y + 1, cw - 6, rh - 5, PANEL if (st // 4) % 2 == 0 else mix(PANEL, BG, 0.5),
                              None, 2)
-        self.box(gx + (self.cur_step - view) * cw, gy + self.sel * rh - 1, cw - 2, rh - 1, None, ORANGE, 3, 2)
-        note = pat["notes"][self.sel][self.cur_step] if pat["steps"][self.sel][self.cur_step] else 0
-        if note:
-            self.text("NOTE %+d" % note, 92, 37, "s", ORANGE, "r")
+        self.box(gx + (self.cur_step - view) * cw, gy + (self.sel - first) * rh - 1, cw - 2, rh - 1, None, ORANGE, 3, 2)
         self.hints("A step (hold + move to paint)   Y accent   B mute   X solo   L2 R2 jump   "
                    "SELECT+left right note   SELECT+L2 R2 octave   SELECT+A clear track   SELECT+X clear all")
 
@@ -1639,7 +1669,7 @@ class App:
                 "FADE IN": "%d ms" % p.fin if p.fin else "OFF", "FADE OUT": "%d ms" % p.fout if p.fout else "OFF",
                 "CHOP": "%s   -  A to chop onto pads" % self.CHOPS[self.chop_mode][0],
                 "FIT TO TEMPO": "%s at %d BPM   -  A to fit" % (FITS[self.fit_idx][0], round(e.bpm)),
-                "SPREAD": "this sound on all 16 pads, a semitone apart  -  A",
+                "SPREAD": "this sound on all 16 pads of the bank, a semitone apart  -  A",
                 "SAMPLE": "%s   -  A to browse files" % (os.path.basename(p.path)[:34] or "(none)")}
         fracs = {"VOLUME": p.vol / 1.5, "PITCH": (p.pitch + 24) / 48.0, "FILTER": (p.filt + 100) / 200.0,
                  "FINE TUNE": (p.fine + 50) / 100.0, "BIT CRUSH": p.crush / (len(CRUSH_BITS) - 1.0),
