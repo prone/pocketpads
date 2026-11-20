@@ -13,6 +13,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - 64 pads in four banks of sixteen, a step grid of 16 to 128 steps with accents and a note per step, eight patterns, sixteen project slots
 - Song mode: chain patterns in order, copy and clear patterns
 - Lo-fi per pad (bit crush, sample-rate reduction) and a master compressor
+- Analog sticks play performance effects (filter, tempo bend, fade, echo, reverb, stutter, crush, pan, tape stop), with the effect for each direction chosen on the FX page
 - Export the song or pattern as a WAV file
 - MIDI through the ALSA sequencer: controllers play pads and turn knobs; pads send notes, clock, start and stop (new, not yet tried with real hardware)
 - Per pad: volume, pitch and fine tune, one-knob filter, trim, fades, reverse, choke group, delay and reverb sends, and one-shot, hold or loop play modes

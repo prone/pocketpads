@@ -119,6 +119,10 @@ class App:
         self.select_alone = False
         self.audition = None   # (pad, start time) while the SOUND page is playing a pad
         self.wheel, self.wheel_acc, self.wheel_seen = 0.0, 0.0, False
+        self.sticks = {"lx": 0.0, "ly": 0.0, "rx": 0.0, "ry": 0.0}      # both sticks, -1 to 1 (up is negative)
+        self.sticks_seen = set()
+        self.stick_level = {}
+        self.stick_fx = dict(self.STICK_DEFAULT)    # the effect chosen for each stick direction (FX page)
         self.perf_held = {}    # button -> performance effect it is holding
         self.slot = 1          # slot the PROJECT row points at
         self.loaded = 1        # slot the project in memory belongs to (autosave goes here)
@@ -147,6 +151,9 @@ class App:
                 state = json.load(f)
             self.slot = min(SLOTS, max(1, int(state.get("slot", 1))))
             self.midi.out_channel = int(state.get("midi_out", 0)) % 17
+            for axis, name in dict(state.get("sticks") or {}).items():
+                if axis in self.stick_fx and name in self.STICK_FX:
+                    self.stick_fx[axis] = name
         except (OSError, ValueError, TypeError, AttributeError):
             pass
         if not os.environ.get("PP_NOMIDI"):
@@ -235,6 +242,13 @@ class App:
             if name:
                 self.button(name, down)
         elif e.type == pygame.CONTROLLERAXISMOTION:
+            stick = {pygame.CONTROLLER_AXIS_LEFTX: "lx", pygame.CONTROLLER_AXIS_LEFTY: "ly",
+                     pygame.CONTROLLER_AXIS_RIGHTX: "rx", pygame.CONTROLLER_AXIS_RIGHTY: "ry"}.get(e.axis)
+            if stick:
+                self.sticks[stick] = e.value / 32768.0
+                if stick not in self.sticks_seen and abs(e.value) > 16000:
+                    self.sticks_seen.add(stick)
+                    self.logline("stick axis seen: %s" % stick)
             if e.axis == pygame.CONTROLLER_AXIS_RIGHTX:
                 self.wheel = e.value / 32768.0
                 if not self.wheel_seen and abs(self.wheel) > 0.5:
@@ -311,11 +325,29 @@ class App:
                 self.repeat[name] = now + 0.07
                 self.press(name, repeat=True)
 
+    def tick_sticks(self):
+        """On the FX page each stick direction plays the effect chosen for it: the further the push,
+        the more effect, and letting go ends it."""
+        e = self.eng
+        v = dict.fromkeys(("FILTER", "TEMPO", "PAN", "FADE OUT", "ECHO", "REVERB", "STUTTER", "CRUSH", "TAPE STOP"), 0.0)
+        if PAGES[self.page] == "FX" and not self.modal():
+            for axis, name in self.stick_fx.items():
+                x = self.sticks[axis] * (-1.0 if axis[1] == "y" else 1.0)      # up counts as positive
+                x = 0.0 if abs(x) < 0.25 else math.copysign(min(1.0, (abs(x) - 0.25) / 0.7), x)    # slack at the centre
+                if len(self.STICK_FX[name]) == 2:
+                    v[name] = x if abs(x) > abs(v[name]) else v[name]
+                elif name in v:
+                    v[name] = max(v[name], abs(x))
+        e.fx_filt, e.fx_tempo, e.fx_pan = v["FILTER"], v["TEMPO"], v["PAN"]
+        e.fx_fade, e.fx_echo, e.fx_verb = v["FADE OUT"], v["ECHO"], v["REVERB"] * 0.8
+        e.fx_stut, e.fx_crush, e.fx_tape = v["STUTTER"], v["CRUSH"], v["TAPE STOP"] > 0.5
+        self.stick_level = v
+
     def tick_wheel(self, dt):
         """The right stick is a data wheel: push it sideways to change the selected value."""
         v = self.wheel
         page = PAGES[self.page]
-        idle = page not in ("SOUND", "FX", "PROJ") and not (page == "SONG" and self.SONG_ROWS[self.song_row] == "LENGTH")
+        idle = page not in ("SOUND", "PROJ") and not (page == "SONG" and self.SONG_ROWS[self.song_row] == "LENGTH")
         if abs(v) < 0.25 or self.modal() or idle:
             self.wheel_acc = 0.0
             return
@@ -341,7 +373,7 @@ class App:
             self.eng.save(self.slot_path(slot))
             self.loaded = slot
             with open(STATE, "w") as f:
-                json.dump({"slot": slot, "midi_out": self.midi.out_channel}, f)
+                json.dump({"slot": slot, "midi_out": self.midi.out_channel, "sticks": self.stick_fx}, f)
             if not quiet:
                 self.say("SAVED P%02d" % slot)
         except OSError as e:
@@ -1000,7 +1032,15 @@ class App:
             t %= 1.0
         return max(0.0, t)
 
-    FX_ROWS = ["COMPRESSOR", "DELAY TIME", "DELAY FEEDBACK", "REVERB SIZE", "STUTTER LENGTH", "REPEAT RATE"]
+    FX_ROWS = ["COMPRESSOR", "DELAY TIME", "DELAY FEEDBACK", "REVERB SIZE", "STUTTER LENGTH", "REPEAT RATE",
+               "L STICK SIDEWAYS", "L STICK UP DOWN", "R STICK SIDEWAYS", "R STICK UP DOWN"]
+    STICK_ROWS = {"L STICK SIDEWAYS": "lx", "L STICK UP DOWN": "ly", "R STICK SIDEWAYS": "rx", "R STICK UP DOWN": "ry"}
+    # What a stick direction can do. Two labels: one effect each way (left or down first).
+    # One label: the same effect whichever way the stick is pushed.
+    STICK_FX = {"OFF": (), "FILTER": ("LOW", "HIGH"), "TEMPO": ("SLOW", "FAST"), "PAN": ("LEFT", "RIGHT"),
+                "FADE OUT": ("FADE",), "ECHO": ("ECHO",), "REVERB": ("REVERB",), "STUTTER": ("STUTTER",),
+                "CRUSH": ("CRUSH",), "TAPE STOP": ("TAPE",)}
+    STICK_DEFAULT = {"lx": "FILTER", "ly": "FADE OUT", "rx": "TEMPO", "ry": "ECHO"}
     PERFORM = {"A": ("stutter", "STUTTER"), "B": ("tape", "TAPE STOP"), "X": ("lp", "LOW-PASS"), "Y": ("hp", "HIGH-PASS")}
 
     def press_fx(self, b, sel):
@@ -1028,6 +1068,10 @@ class App:
                 e.stutter_div = (e.stutter_div + d) % len(STUTTERS)
             elif row == "REPEAT RATE":
                 e.repeat_div = (e.repeat_div + d) % len(RATES)
+            elif row in self.STICK_ROWS:
+                names = list(self.STICK_FX)
+                axis = self.STICK_ROWS[row]
+                self.stick_fx[axis] = names[(names.index(self.stick_fx[axis]) + d) % len(names)]
 
     PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "PROJECT", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES"]
                  + (["IMPORT CHOPS", "GRAINBRICK"] if GB_DIR else []) + ["QUIT"])
@@ -1754,30 +1798,52 @@ class App:
         vals = {"COMPRESSOR": "%d%%" % round(e.comp * 100) if e.comp else "OFF", "DELAY TIME": DELAY_TIMES[e.delay_div][0], "DELAY FEEDBACK": "%d%%" % round(e.delay_fb * 100),
                 "REVERB SIZE": "%d%%" % round(e.reverb_size * 100), "STUTTER LENGTH": STUTTERS[e.stutter_div][0],
                 "REPEAT RATE": RATES[e.repeat_div][0]}
+        for row, axis in self.STICK_ROWS.items():
+            vals[row] = self.stick_fx[axis]
         for i, name in enumerate(self.FX_ROWS):
-            y = 36 + i * 28
+            y = 36 + i * 26 + (8 if name in self.STICK_ROWS else 0)
             on = i == self.fx_row
-            self.box(8, y, 318, 26, PANEL if on else None, ORANGE if on else None, 4, 2)
-            self.text(name, 20, y + 13, "m", ORANGE if on else DIM)
-            self.text(vals[name], 316, y + 13, "m", TEXT, "r")
-        notes = ["The compressor glues the whole mix.", "Delay and reverb are shared: each pad's",
-                 "send is set on the SOUND page.", "Note repeat: PLAY page, SELECT + X.",
-                 "Bit crush and lo-fi rate: SOUND page."]
-        for i, t in enumerate(notes):
-            self.text(t, 20, 218 + i * 18, "h", mix(DIM, TEXT, 0.6))
+            self.box(8, y, 318, 24, PANEL if on else None, ORANGE if on else None, 4, 2)
+            self.text(name, 20, y + 12, "m", ORANGE if on else DIM)
+            self.text(vals[name], 316, y + 12, "m", TEXT, "r")
+        self.text("Sticks: pick the effect each direction plays.", 20, 316, "s", mix(DIM, TEXT, 0.6))
         self.box(338, 34, 294, 296, PANEL, LINE, 6)
         self.text("PERFORM", 350, 52, "l", ORANGE)
-        self.text("hold to apply", 622, 53, "s", DIM, "r")
-        spots = {"X": (420, 84), "Y": (346, 146), "A": (494, 146), "B": (420, 208)}
+        self.text("hold a button or push a stick", 622, 53, "s", DIM, "r")
+        spots = {"X": (348, 68), "Y": (488, 68), "A": (348, 102), "B": (488, 102)}
         for btn, (x, y) in spots.items():
             fx, label = self.PERFORM[btn]
             on = e.perf[fx]
-            self.box(x, y, 130, 50, ORANGE if on else DARK, None if on else LINE, 8)
-            self.text(btn, x + 22, y + 25, "l", DARK if on else ORANGE, "c")
-            self.text(label, x + 82, y + 25, "s", DARK if on else TEXT, "c")
-        self.text("Works on the whole mix.", 485, 282, "h", mix(DIM, TEXT, 0.6), "c")
-        self.text("Let go and the sound snaps back.", 485, 300, "h", mix(DIM, TEXT, 0.6), "c")
-        self.hints("up down choose   left right change   hold A B X Y to perform")
+            self.box(x, y, 134, 28, ORANGE if on else DARK, None if on else LINE, 6)
+            self.text(btn, x + 16, y + 14, "m", DARK if on else ORANGE, "c")
+            self.text(label, x + 78, y + 14, "s", DARK if on else TEXT, "c")
+        # the two sticks: a dot shows the push, the effect it is reaching for lights up
+        live = PAGES[self.page] == "FX" and not self.modal()
+        lv = self.stick_level
+        for title, cx, ax, ay in (("LEFT STICK", 412, "lx", "ly"), ("RIGHT STICK", 556, "rx", "ry")):
+            cy, r = 234, 30
+            self.text(title, cx, 152, "s", DIM, "c")
+            self.box(cx - r, cy - r, r * 2, r * 2, DARK, LINE, r)
+            self.box(cx - r, cy - 0.5, r * 2, 1, LINE, None, 0)
+            self.box(cx - 0.5, cy - r, 1, r * 2, LINE, None, 0)
+            x, y = (self.sticks[ax], self.sticks[ay]) if live else (0.0, 0.0)
+            busy = False
+            # each direction's label, lit while that effect is sounding
+            for axis, lo_at, hi_at in ((ax, (cx - r - 5, cy, "r"), (cx + r + 5, cy, "l")),
+                                       (ay, (cx, cy + r + 11, "c"), (cx, cy - r - 10, "c"))):
+                name = self.stick_fx[axis]
+                labels = self.STICK_FX[name]
+                level = lv.get(name, 0.0)
+                busy = busy or bool(level)
+                if len(labels) == 2:
+                    self.text(labels[0], lo_at[0], lo_at[1], "s", ORANGE if level < 0 else TEXT, lo_at[2])
+                    self.text(labels[1], hi_at[0], hi_at[1], "s", ORANGE if level > 0 else TEXT, hi_at[2])
+                elif labels:
+                    self.text(labels[0], hi_at[0], hi_at[1], "s", ORANGE if level else TEXT, hi_at[2])
+                    self.text(labels[0], lo_at[0], lo_at[1], "s", ORANGE if level else mix(DIM, TEXT, 0.4), lo_at[2])
+            self.box(cx + x * (r - 6) - 6, cy + y * (r - 6) - 6, 12, 12, ORANGE if busy else DIM, None, 6)
+        self.text("Push further for more. Let go and it snaps back.", 485, 312, "s", mix(DIM, TEXT, 0.6), "c")
+        self.hints("up down choose   left right change   hold A B X Y or push the sticks to perform")
 
     def draw_proj(self):
         e = self.eng
@@ -1868,6 +1934,8 @@ class App:
                 self.button(cmd[1], cmd[0] == "down")
             elif cmd[0] == "wheel":
                 self.wheel = float(cmd[1])
+            elif cmd[0] == "stick":             # stick lx ly rx ry
+                self.sticks.update(zip(("lx", "ly", "rx", "ry"), map(float, cmd[1:5])))
             elif cmd[0] == "wait":
                 self.script_wait = time.time() + float(cmd[1])
             elif cmd[0] == "shot":
@@ -1891,7 +1959,7 @@ class App:
     def tick_midi(self):
         """Feed the MIDI port what it needs for clock, and act on what controllers sent."""
         e, m = self.eng, self.midi
-        m.bpm, m.playing = e.bpm, e.playing
+        m.bpm, m.playing = e.bpm * 1.5 ** e.fx_tempo, e.playing
         m.latency = (e.queue_blocks + 1) * BLOCK / SR
         if len(m.devices) < self.midi_seen:         # a controller was unplugged: let go of whatever it held
             for pad in self.midi_held.values():
@@ -1949,6 +2017,7 @@ class App:
             self.tick_record()
             self.flush_bake(force=False)
             self.tick_live()
+            self.tick_sticks()
             self.tick_wheel(1 / 30.0)
             self.tick_midi()
             if self.resampling and time.time() - self.resampling[0] > 60:

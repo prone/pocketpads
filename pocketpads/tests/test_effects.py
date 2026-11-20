@@ -96,4 +96,23 @@ def loud(comp):
 (l0, q0), (l1, q1) = loud(0.0), loud(1.0)
 print("compressor: loud %.2f -> %.2f, quiet %.3f -> %.3f (range %.1fx -> %.1fx)" % (l0, l1, q0, q1, l0 / q0, l1 / q1))
 assert q1 > q0 * 1.8 and l1 / q1 < 0.6 * l0 / q0 and l1 <= 1.0
+# --- stick effects: analog amounts set by the UI
+import numpy as _n, engine as _g
+def _mix(**fx):
+    q = _g.Engine(); q.pads[0].raw = (_n.sin(_n.arange(_g.SR * 2) * 2 * _n.pi * 440 / _g.SR) * 0.5).astype(_n.float32)[:, None].repeat(2, 1)
+    q.pads[0].bake(); q.pads[0].mode = _g.LOOP if hasattr(_g, "LOOP") else q.pads[0].mode
+    for k, v in fx.items(): setattr(q, k, v)
+    q.trigger(0); return _n.concatenate([q.render(_g.BLOCK) for _ in range(40)])[4096:], q
+dry, _ = _mix()
+lvl = lambda a: float(_n.sqrt((a ** 2).mean()))
+assert lvl(_mix(fx_fade=1.0)[0]) < 0.001 and 0.1 < lvl(_mix(fx_fade=0.5)[0]) / lvl(dry) < 0.5
+a, _ = _mix(fx_pan=1.0); assert lvl(a[:, 0]) < 0.001 and abs(lvl(a[:, 1]) - lvl(dry[:, 1])) < 0.01
+assert lvl(_mix(fx_filt=1.0)[0]) < lvl(dry) * 0.5                     # 440 Hz under a 3.5 kHz high-pass
+assert len(_n.unique(_n.round(_mix(fx_crush=1.0)[0][:, 0], 5))) < 40    # few levels left
+assert lvl(_mix(fx_echo=1.0)[0] - dry) > 0.01 and lvl(_mix(fx_verb=0.8)[0] - dry) > 0.01
+for fx in ({"fx_stut": 1.0}, {"fx_tape": True}, {"fx_filt": -1.0}):
+    a, _ = _mix(**fx); assert _n.isfinite(a).all() and _n.abs(a).max() <= 1.0
+q = _g.Engine(); q.bpm = 120; sf = q.step_frames(); q.fx_tempo = 1.0; assert abs(sf / q.step_frames() - 1.5) < 1e-6
+q.fx_tempo = -1.0; assert abs(q.step_frames() / sf - 1.5) < 1e-6
+print("stick effects: fade, pan, filter, crush, echo, reverb, stutter, tape, tempo bend")
 print("ALL FX OK")

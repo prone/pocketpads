@@ -554,7 +554,13 @@ class Engine:
         self.perf = {"lp": False, "hp": False, "stutter": False, "tape": False}
         self.hist = np.zeros((HSIZE, 2), np.float32)
         self.hw = 0
-        self._st_loop, self._st_pos = None, 0
+        self._st_loop, self._st_pos, self._st_steps = None, 0, 0.0
+        # Stick effects, set by the UI as plain numbers: how far each stick is pushed, 0 to 1
+        # (fx_filt is -1 to 1: low-pass to the left, high-pass to the right).
+        self.fx_filt = self.fx_echo = self.fx_verb = self.fx_fade = self.fx_crush = self.fx_stut = 0.0
+        self.fx_tempo = self.fx_pan = 0.0       # -1 to 1 as well: slower / faster, left / right
+        self.fx_tape = False
+        self._fade_g, self._crush_amt, self._pan = 1.0, 0.0, 0.0
         self._tape_pos, self._tape_rate, self._tape_was = None, 1.0, False
         self._fir_tail = np.zeros((TAPS - 1, 2), np.float32)
         self._fir_p, self._fir_hp, self._fir_on = 0.0, False, False
@@ -664,7 +670,8 @@ class Engine:
         return sum(self.patterns[i]["length"] for i in self.song)
 
     def step_frames(self):
-        return SR * 60.0 / self.bpm / 4.0
+        # fx_tempo is the stick's tempo bend: -1 is two thirds of the speed, +1 is half as fast again
+        return SR * 60.0 / (self.bpm * 1.5 ** self.fx_tempo) / 4.0
 
     # ----- rendering (audio thread)
     def _start_voice(self, pad, vel, off, gate=None, buf=None, manual=False, note=None):
@@ -845,6 +852,11 @@ class Engine:
                     rbus = np.zeros((n, 2), np.float32)
                 rbus[off:off + take] += chunk * rs
         self.voices = alive
+        echo, verb = self.fx_echo, self.fx_verb     # stick "throws": the whole mix into the delay or reverb
+        if echo > 0.0:
+            dbus = out * echo if dbus is None else dbus + out * echo
+        if verb > 0.0:
+            rbus = out * verb if rbus is None else rbus + out * verb
         d = int(min(Delay.SIZE - n, max(n, self.step_frames() * DELAY_TIMES[self.delay_div][1])))
         wet = self.delay.process(dbus, n, d, self.delay_fb)
         if wet is not None:
@@ -887,9 +899,13 @@ class Engine:
         mask = HSIZE - 1
         ar = _ar(n)
         self.hist[(self.hw + ar) & mask] = out
-        if pf["stutter"]:
-            if self._st_loop is None:
-                length = int(max(256, min(HSIZE // 2, self.step_frames() * STUTTERS[self.stutter_div][1])))
+        deep = self.fx_stut
+        if pf["stutter"] or deep > 0.0:
+            # From the stick the loop gets shorter the further it is pushed: 2 steps down to a quarter step.
+            steps = 2.0 * 0.5 ** min(3, int(deep * 4)) if deep > 0.0 else STUTTERS[self.stutter_div][1]
+            if self._st_loop is None or steps != self._st_steps:
+                self._st_steps = steps
+                length = int(max(256, min(HSIZE // 2, self.step_frames() * steps)))
                 loop = self.hist[(self.hw + n - length + np.arange(length)) & mask].copy()
                 f = min(64, length // 4)
                 loop[:f] *= np.linspace(0, 1, f, dtype=np.float32)[:, None]
@@ -900,7 +916,7 @@ class Engine:
             self._st_pos = (self._st_pos + n) % length
         else:
             self._st_loop = None
-        if pf["tape"]:
+        if pf["tape"] or self.fx_tape:
             if self._tape_pos is None:
                 self._tape_pos, self._tape_rate = float(self.hw), 1.0
             rates = np.maximum(0.0, self._tape_rate - (ar + 1) / (0.7 * SR))
@@ -920,7 +936,15 @@ class Engine:
         if held and self._fir_p <= 0:
             self._fir_hp = bool(pf["hp"])
         step = n / SR
-        self._fir_p = min(1.0, self._fir_p + step / 1.2) if held else max(0.0, self._fir_p - step / 0.15)
+        af = self.fx_filt
+        if af and not held:             # from the stick the filter follows the push instead of sweeping by itself
+            if self._fir_p <= 0:
+                self._fir_hp = af > 0
+            target = abs(af) if (af > 0) == self._fir_hp else 0.0      # crossing over: open up first, then flip
+            move = step / 0.08
+            self._fir_p = min(target, self._fir_p + move) if self._fir_p < target else max(target, self._fir_p - move)
+        else:
+            self._fir_p = min(1.0, self._fir_p + step / 1.2) if held else max(0.0, self._fir_p - step / 0.15)
         src = np.concatenate((self._fir_tail, out))
         self._fir_tail = src[-(TAPS - 1):].copy()
         if self._fir_p > 0 or self._fir_on:
@@ -937,6 +961,29 @@ class Engine:
                 r = np.linspace(0, 1, n, dtype=np.float32)[:, None]
                 out[:] = out * (1 - r) + wet * r if now_on else wet * (1 - r) + out * r
             self._fir_on = now_on
+        # stick crush: fewer bits and a held sample rate, deeper with the push
+        self._crush_amt += (self.fx_crush - self._crush_amt) * 0.5
+        c = self._crush_amt
+        if c > 0.02:
+            k = 1 + int(c * 23)
+            if k > 1:
+                out[:] = out[(ar // k) * k]
+            q = 2.0 ** (12.0 - 9.0 * c)
+            np.round(out * q, out=out)
+            out /= q
+        # stick fade: the whole output down to silence, back up when the stick is let go
+        g1 = (1.0 - min(1.0, max(0.0, self.fx_fade))) ** 2
+        g0 = self._fade_g
+        if g0 < 0.999 or g1 < 0.999:
+            out *= np.linspace(g0, g1, n, dtype=np.float32)[:, None]
+        self._fade_g = g1
+        # stick pan: swing the whole mix to one side
+        p0, p1 = self._pan, min(1.0, max(-1.0, self.fx_pan))
+        if p0 or p1:
+            pan = np.linspace(p0, p1, n, dtype=np.float32)
+            out[:, 0] *= np.minimum(1.0, 1.0 - pan)
+            out[:, 1] *= np.minimum(1.0, 1.0 + pan)
+        self._pan = p1
 
     def render_pcm(self, n):
         return (self.render(n) * 32767.0).astype("<i2")
