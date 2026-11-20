@@ -561,6 +561,8 @@ class Engine:
         self.fx_tempo = self.fx_pan = 0.0       # -1 to 1 as well: slower / faster, left / right
         self.fx_tape = False
         self._fade_g, self._crush_amt, self._pan = 1.0, 0.0, 0.0
+        self._fir_last, self._fir_fc = None, 0.0
+        self._echo_g = self._verb_g = self._tempo_g = 0.0
         self._tape_pos, self._tape_rate, self._tape_was = None, 1.0, False
         self._fir_tail = np.zeros((TAPS - 1, 2), np.float32)
         self._fir_p, self._fir_hp, self._fir_on = 0.0, False, False
@@ -852,11 +854,16 @@ class Engine:
                     rbus = np.zeros((n, 2), np.float32)
                 rbus[off:off + take] += chunk * rs
         self.voices = alive
-        echo, verb = self.fx_echo, self.fx_verb     # stick "throws": the whole mix into the delay or reverb
-        if echo > 0.0:
-            dbus = out * echo if dbus is None else dbus + out * echo
-        if verb > 0.0:
-            rbus = out * verb if rbus is None else rbus + out * verb
+        # Stick "throws": the whole mix into the delay or reverb. The amount glides across the block,
+        # because the stick is only read 30 times a second and a stepped level crackles.
+        e0, e1, v0, v1 = self._echo_g, self.fx_echo, self._verb_g, self.fx_verb
+        self._echo_g, self._verb_g = e1, v1
+        if e0 > 0.0 or e1 > 0.0:
+            send = out * np.linspace(e0, e1, n, dtype=np.float32)[:, None]
+            dbus = send if dbus is None else dbus + send
+        if v0 > 0.0 or v1 > 0.0:
+            send = out * np.linspace(v0, v1, n, dtype=np.float32)[:, None]
+            rbus = send if rbus is None else rbus + send
         d = int(min(Delay.SIZE - n, max(n, self.step_frames() * DELAY_TIMES[self.delay_div][1])))
         wet = self.delay.process(dbus, n, d, self.delay_fb)
         if wet is not None:
@@ -903,6 +910,9 @@ class Engine:
         if pf["stutter"] or deep > 0.0:
             # From the stick the loop gets shorter the further it is pushed: 2 steps down to a quarter step.
             steps = 2.0 * 0.5 ** min(3, int(deep * 4)) if deep > 0.0 else STUTTERS[self.stutter_div][1]
+            old = None
+            if self._st_loop is not None and steps != self._st_steps:
+                old = self._st_loop[(self._st_pos + ar) % len(self._st_loop)]   # what the old loop would have played
             if self._st_loop is None or steps != self._st_steps:
                 self._st_steps = steps
                 length = int(max(256, min(HSIZE // 2, self.step_frames() * steps)))
@@ -913,6 +923,9 @@ class Engine:
                 self._st_loop, self._st_pos = loop, 0
             length = len(self._st_loop)
             out[:] = self._st_loop[(self._st_pos + ar) % length]
+            if old is not None:             # changing the loop length glides instead of jumping
+                r = np.linspace(0, 1, n, dtype=np.float32)[:, None]
+                out[:] = old * (1 - r) + out * r
             self._st_pos = (self._st_pos + n) % length
         else:
             self._st_loop = None
@@ -955,6 +968,14 @@ class Engine:
             wet[:, 0] = np.convolve(src[:, 0], h, "valid")
             wet[:, 1] = np.convolve(src[:, 1], h, "valid")
             now_on = p > 0
+            # A moving cutoff glides from the last block's filter to this one's. Switching outright
+            # leaves a small jump at every block edge, heard as crackle when a stick moves fast.
+            last, self._fir_last = self._fir_last, h
+            if now_on and self._fir_on and last is not None and abs(fc - self._fir_fc) > 0.5:
+                r = np.linspace(0, 1, n, dtype=np.float32)
+                wet[:, 0] = np.convolve(src[:, 0], last, "valid") * (1 - r) + wet[:, 0] * r
+                wet[:, 1] = np.convolve(src[:, 1], last, "valid") * (1 - r) + wet[:, 1] * r
+            self._fir_fc = fc
             if now_on and self._fir_on:
                 out[:] = wet
             else:  # crossfade in or out for one block
