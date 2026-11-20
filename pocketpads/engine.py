@@ -1005,6 +1005,37 @@ class Engine:
             self.sdl.SDL_CloseAudioDevice(self.dev)
             self.dev = None
 
+    def render_offline(self, loops=4, tail=2.5, max_seconds=600, progress=None):
+        """Render the song (or the current pattern `loops` times) to an (n, 2) array, faster than real time.
+
+        Works on a private copy of the project, so the live engine keeps playing or idling untouched.
+        `progress`, if given, is called with a 0..1 fraction now and then.
+        """
+        twin = Engine()
+        twin.from_dict(self.to_dict())
+        twin.cur_pat = self.cur_pat
+        for a, b in zip(twin.pads, self.pads):      # share audio already in memory instead of reloading files
+            if b.raw is not None and a.raw is None:
+                a.raw, a.peaks, a.path, a.name = b.raw, b.peaks, b.path, b.name
+                a.bake()
+            a.solo = b.solo
+        twin.refresh_variants()
+        steps = twin.song_bars() if (twin.song_on and twin.song) else loops * twin.patterns[twin.cur_pat]["length"]
+        end = min(int(round(steps * twin.step_frames())), int(max_seconds * SR))
+        twin.play()
+        blocks = []
+        while twin._clock < end:                    # stop exactly on the last bar line, not a block later
+            blocks.append(twin.render(min(BLOCK, end - twin._clock)))
+            if progress and len(blocks) % 64 == 0:
+                progress(min(0.99, twin._clock / (end + tail * SR)))
+        twin.stop()
+        for _ in range(int(tail * SR / BLOCK)):     # let the delay, reverb and last notes ring out
+            blocks.append(twin.render(BLOCK))
+        audio = np.concatenate(blocks)
+        f = min(len(audio), int(0.4 * SR))
+        audio[-f:] *= np.linspace(1, 0, f, dtype=np.float32)[:, None]
+        return audio
+
     # ----- projects
     def to_dict(self):
         return {

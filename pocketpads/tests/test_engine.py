@@ -69,4 +69,14 @@ f = _os.path.join(_d, "p.json"); g.save(f); h = _e.Engine(); h.load(f)
 assert h.song == [1, 2] and h.patterns[3]["length"] == 128 and h.patterns[3]["steps"][5][127] == 2
 assert h.patterns[0]["notes"][0][0] == 12 and 12 in h.pads[0].variants
 h.copy_pattern(0, 6); assert h.patterns[6]["notes"][0][0] == 12; h.clear_pattern(0); assert not h.pads[0].variants or 12 in h.pads[0].variants
+# --- export
+import kit as _kit
+g = _e.Engine()
+for _p, _x in zip(g.pads, _kit.ensure_kit(_os.path.join(_d, "kit"))): _p.load(_x)
+_kit.demo_patterns(g.patterns); g.bpm = 120
+a = g.render_offline(loops=2)
+assert abs(len(a) / _e.SR - 6.5) < 0.02 and _np.abs(a[:_e.SR]).max() > 0.1 and _np.abs(a[-200:]).max() < 0.01
+g.song, g.song_on = [0, 1, 1], True; g.patterns[1]["length"] = 32
+a = g.render_offline(); print("exported song: %.2f s (want 12.5)" % (len(a) / _e.SR))
+assert abs(len(a) / _e.SR - 12.5) < 0.02 and not g.playing
 print("ALL OK")

@@ -827,6 +827,33 @@ class App:
         self.page = PAGES.index("PLAY")
         self.say("PAD %d SPREAD ACROSS THE PADS" % (self.sel + 1), 2.5)
 
+    def export_audio(self):
+        """Render the song (or four loops of the current pattern) to samples/exports/ as a WAV file."""
+        e = self.eng
+        e.stop()
+        self.flush_bake()
+
+        def progress(frac):
+            pygame.event.pump()
+            self.box(170, 150, 300, 60, PANEL, ORANGE, 6, 2)
+            self.text("EXPORTING  %d%%" % round(frac * 100), 320, 170, "m", TEXT, "c")
+            self.box(190, 188, 260, 8, DARK, None, 3)
+            self.box(190, 188, 260 * frac, 8, TEAL, None, 3)
+            pygame.display.flip()
+        try:
+            progress(0.0)
+            audio = e.render_offline(progress=progress)
+            folder = os.path.join(SAMPLES, "exports")
+            os.makedirs(folder, exist_ok=True)
+            kind = "SONG" if (e.song_on and e.song) else "PATTERN %s" % PAT_NAMES[e.cur_pat]
+            path = self.unused_path(folder, "P%02d %s %s" % (self.loaded, kind, time.strftime("%Y-%m-%d %H-%M")))
+            write_wav(path, audio)
+        except (OSError, ValueError, MemoryError) as err:
+            self.say("EXPORT FAILED: %s" % err, 4)
+            return
+        self.logline("export: %s, %.1f s" % (path, len(audio) / SR))
+        self.say("SAVED %d:%02d TO samples/exports/" % (len(audio) / SR // 60, len(audio) / SR % 60), 4)
+
     def start_resample(self):
         self.eng.capture_start()
         if not self.eng.playing:
@@ -935,7 +962,7 @@ class App:
             elif row == "REPEAT RATE":
                 e.repeat_div = (e.repeat_div + d) % len(RATES)
 
-    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "PROJECT", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "LENGTH", "MASTER"]
+    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "PROJECT", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "LENGTH", "MASTER"]
                  + (["IMPORT CHOPS", "GRAINBRICK"] if GB_DIR else []) + ["QUIT"])
 
     def press_proj(self, b, sel):
@@ -970,6 +997,9 @@ class App:
                 self.confirm = ("START A NEW PROJECT?", self.new_project)
             elif row == "RECORD MIC":
                 self.confirm = ("RECORD %d SECONDS? REPLACES ALL PADS" % REC_SECONDS, self.start_record)
+            elif row == "EXPORT AUDIO":
+                what = "THE SONG" if (e.song_on and e.song) else "PATTERN %s x 4" % PAT_NAMES[e.cur_pat]
+                self.confirm = ("EXPORT %s AS A WAV FILE?" % what, self.export_audio)
             elif row == "RESAMPLE":
                 self.confirm = ("RESAMPLE THE OUTPUT TO PAD %d?" % (self.sel + 1), self.start_resample)
             elif row == "IMPORT CHOPS":
@@ -1673,6 +1703,8 @@ class App:
                 "MASTER": "%d" % round(e.master * 100), "QUIT": "save and exit",
                 "RECORD MIC": "%d s from the mic, chopped onto pads" % REC_SECONDS,
                 "RESAMPLE": "record what you hear onto pad %d" % (self.sel + 1),
+                "EXPORT AUDIO": "save %s as a WAV file" % ("the song" if (e.song_on and e.song)
+                                                           else "pattern %s x 4" % PAT_NAMES[e.cur_pat]),
                 "IMPORT CHOPS": "slices from a GrainBrick project",
                 "GRAINBRICK": "open it to sample, quit to return"}
         for i, name in enumerate(self.PROJ_ROWS):
