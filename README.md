@@ -6,7 +6,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 
 ![The PLAY page: sixteen pads and the selected pad's waveform](site/img/play.png)
 
-**Status: early (version 0.03).** It has been tested on exactly one device, a TrimUI Smart Pro on KNULLI Scarab. Expect rough edges, and expect project files to change format.
+**Status: early (version 0.4).** It has been tested on exactly one device, a TrimUI Smart Pro on KNULLI Scarab. Expect rough edges, and expect project files to change format.
 
 ## Features
 
@@ -27,6 +27,15 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - The right analog stick works as a data wheel on the SOUND and PROJ pages
 
 The manual is a single static page in [`site/`](site/index.html).
+
+## What's new in 0.4
+
+- **Performance fixes.** The screen now redraws only the areas that change instead of the whole picture every frame. On the Smart Pro this roughly halves the drawing work on the PLAY and BEAT pages while a beat plays (about 29 ms down to 14 ms of each 33 ms frame on the step grid), which removes the slow-down and crackle that drawing caused by crowding out the audio.
+- **Smoother stick effects.** Filter, echo, reverb and stutter glide between values, so fast stick moves no longer crackle.
+- Stick performance effects on the FX page, with the effect for each stick direction chosen by you.
+- Song mode, eight patterns of 16 to 128 steps, a note per step, row painting, four pad banks (64 pads).
+- Lo-fi per pad, a master compressor, WAV export, MIDI in and out.
+- NEW starts a project in the next empty slot and keeps the open one.
 
 ## Install on a TrimUI Smart Pro (KNULLI)
 

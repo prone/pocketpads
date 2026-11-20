@@ -26,7 +26,7 @@ SAMPLES = os.path.join(APP_DIR, "samples")
 PROJECTS = os.path.join(APP_DIR, "projects")
 STATE = os.path.join(APP_DIR, "state.json")
 PAGES = ["PLAY", "BEAT", "SONG", "SOUND", "FX", "PROJ"]
-VERSION = "0.03"
+VERSION = "0.4"
 CONVERT_EXTS = (".mp3", ".flac", ".ogg", ".m4a", ".aac", ".aif", ".aiff", ".opus")   # read through ffmpeg
 CONVERT_SECONDS = 180
 REC_SECONDS = 10
@@ -72,8 +72,18 @@ PAD_BUTTONS = {"a": "B", "b": "A", "x": "Y", "y": "X", "leftshoulder": "l1", "ri
                "dpleft": "left", "dpright": "right"}
 
 
+_MIXED = {}
+
+
 def mix(a, b, t):
-    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+    """Blend two colours. Remembered, because the pages ask for the same few blends every frame."""
+    key = (a, b, t)
+    c = _MIXED.get(key)
+    if c is None:
+        if len(_MIXED) > 2000:
+            _MIXED.clear()
+        c = _MIXED[key] = tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+    return c
 
 
 class App:
@@ -85,9 +95,17 @@ class App:
         win = os.environ.get("PP_WINDOW")
         if win:
             w, h = (int(v) for v in win.split("x"))
-            self.screen = pygame.display.set_mode((w, h))
+            self.display = pygame.display.set_mode((w, h))
         else:
-            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+            self.display = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        # Everything is drawn on `screen`, a picture kept in memory, and copied to the display when it
+        # changes. That lets a frame redraw only the areas that changed (see draw), which matters:
+        # redrawing it all takes most of a frame on a handheld and starves the audio thread.
+        self.screen = pygame.Surface(self.display.get_size())
+        self.ops = None                 # while a frame is being described: its list of drawing steps
+        self.frame = []                 # the last frame shown, as [(area, steps), ...]
+        self.geom = {}                  # box geometry already worked out
+        self.hint_rows = {}             # hint lines already laid out
         pygame.display.set_caption("PocketPads")
         pygame.mouse.set_visible(False)
         self.W, self.H = self.screen.get_size()
@@ -195,7 +213,7 @@ class App:
         self.text("PocketPads", 320, 272, "xl", TEXT, "c")
         self.text("VERSION %s" % VERSION, 320, 302, "m", ORANGE, "c")
         self.text(status, 320, 332, "s", DIM, "c")
-        pygame.display.flip()
+        self.present()
 
     # ------------------------------------------------------------ input
     def init_controllers(self):
@@ -946,7 +964,7 @@ class App:
             self.text("EXPORTING  %d%%" % round(frac * 100), 320, 170, "m", TEXT, "c")
             self.box(190, 188, 260, 8, DARK, None, 3)
             self.box(190, 188, 260 * frac, 8, TEAL, None, 3)
-            pygame.display.flip()
+            self.present()
         try:
             progress(0.0)
             audio = e.render_offline(progress=progress)
@@ -1472,15 +1490,46 @@ class App:
     def R(self, x, y, w, h):
         return pygame.Rect(int(self.ox + x * self.u), int(self.oy + y * self.u), self.S(w), self.S(h))
 
+    def present(self, rects=None):
+        """Copy the picture, or just the given parts of it, to the display."""
+        if rects:
+            for r in rects:
+                self.display.blit(self.screen, r, r)
+        else:
+            self.display.blit(self.screen, (0, 0))
+        pygame.display.flip()
+        self.frame = []                 # whatever was drawn, the next frame starts from scratch
+
+    def area(self, x, y, w, h):
+        """Start a new area of the frame. An area is redrawn only when its drawing steps change."""
+        self.ops = []
+        self.areas.append(((x, y, w, h), self.ops))
+
     def box(self, x, y, w, h, fill=None, border=None, radius=3, bw=1):
-        r = self.R(x, y, w, h)
+        if self.ops is not None:        # describing a frame: note the step, draw later if needed
+            self.ops.append((self._box, x, y, w, h, fill, border, radius, bw))
+        else:
+            self._box(x, y, w, h, fill, border, radius, bw)
+
+    def _box(self, x, y, w, h, fill, border, radius, bw):
+        key = (x, y, w, h, radius, bw)
+        g = self.geom.get(key)
+        if g is None:
+            if len(self.geom) > 4000:
+                self.geom.clear()
+            g = self.geom[key] = (self.R(x, y, w, h), self.S(radius), max(1, self.S(bw)))
         if fill is not None:
-            pygame.draw.rect(self.screen, fill, r, 0, self.S(radius))
+            pygame.draw.rect(self.screen, fill, g[0], 0, g[1])
         if border is not None:
-            pygame.draw.rect(self.screen, border, r, max(1, self.S(bw)), self.S(radius))
-        return r
+            pygame.draw.rect(self.screen, border, g[0], g[2], g[1])
 
     def text(self, s, x, y, font="m", color=TEXT, align="l"):
+        if self.ops is not None:
+            self.ops.append((self._text, s, x, y, font, color, align))
+        else:
+            self._text(s, x, y, font, color, align)
+
+    def _text(self, s, x, y, font, color, align):
         key = (s, font, color)
         surf = self.cache.get(key)
         if surf is None:
@@ -1495,7 +1544,17 @@ class App:
             px -= w
         self.screen.blit(surf, (int(px), int(py - h / 2)))
 
+    def custom(self, fn, *key):
+        """A drawing step done by a function. `key` must change whenever what it draws changes."""
+        if self.ops is not None:
+            self.ops.append((fn,) + key)
+        else:
+            fn(*key)
+
     def wave(self, pad, x, y, w, h, color, trim=False):
+        self.custom(self._wave, pad, x, y, w, h, color, trim, id(pad.raw), pad.start, pad.end)
+
+    def _wave(self, pad, x, y, w, h, color, trim, *_):
         if pad.peaks is None:
             self.box(x, y, w, h, DARK, LINE)
             self.text("NO SAMPLE", x + w / 2, y + h / 2, "m", DIM, "c")
@@ -1529,8 +1588,40 @@ class App:
                                  (px, int(self.oy + (y + h - 1) * self.u)), max(2, self.S(1)))
 
     def draw(self):
+        """Describe the frame as areas of drawing steps, then redraw only the areas that changed."""
+        self.areas = []
+        try:
+            self.describe()
+        finally:
+            self.ops = None
+        old, new = self.frame, self.areas
+        over = new[-1][1]                               # dialogs and messages lie on top of everything
+        same_layout = len(old) == len(new) and all(a[0] == b[0] for a, b in zip(old, new))
+        changed = [i for i in range(len(new))] if not same_layout else [i for i in range(len(new)) if old[i][1] != new[i][1]]
+        if not changed:
+            return
+        rects = []
+        if not same_layout or over or old[-1][1]:       # anything on top: simplest to redraw the lot
+            changed = range(len(new))
+            self.screen.fill(BG)
+            rects = None
+        for i in changed:
+            (x, y, w, h), ops = new[i]
+            if w:
+                clip = self.R(x, y, w, h)
+                self.screen.set_clip(clip)
+                self.screen.fill(BG, clip)
+                if rects is not None:
+                    rects.append(clip)
+            for op in ops:
+                op[0](*op[1:])
+            self.screen.set_clip(None)
+        self.present(rects)
+        self.frame = new
+
+    def describe(self):
         e = self.eng
-        self.screen.fill(BG)
+        self.area(0, 0, 640, 29)
         # top bar
         x = 6
         for i, name in enumerate(PAGES):
@@ -1553,24 +1644,23 @@ class App:
         if self.resampling:
             self.text("RESAMP", 512, 16, "s", RED if blink else ORANGE)
         elif e.rec:
-            pygame.draw.circle(self.screen, RED if (not e.playing or blink) else mix(RED, BG, 0.6),
-                               self.R(520, 15, 0, 0).topleft, self.S(5))
+            self.custom(self._dot, RED if (not e.playing or blink) else mix(RED, BG, 0.6))
             self.text("REC", 528, 16, "s", RED)
         elif e.song_on:
             self.text("SONG", 514, 16, "s", TEAL)
         if e.playing:
-            cx, cy = self.R(560, 15, 0, 0).topleft
-            s = self.S(6)
-            pygame.draw.polygon(self.screen, TEAL, [(cx - s, cy - s), (cx - s, cy + s), (cx + s, cy)])
+            self.custom(self._play_mark)
         else:
             self.box(554, 9, 12, 12, DIM, None, 1)
         # output meter
         self.box(578, 9, 56, 12, DARK, LINE, 2)
-        lv = min(1.0, e.peak)
+        lv = round(min(1.0, e.peak) * 26) / 26.0        # in steps: a meter that twitches redraws the bar
         if lv > 0.01:
             self.box(580, 11, 52 * lv, 8, RED if lv > 0.95 else TEAL, None, 1)
 
+        self.area(0, 29, 640, 301)
         getattr(self, "draw_" + PAGES[self.page].lower())()
+        self.area(0, 0, 0, 0)                           # on top: lists, dialogs, messages (not clipped)
         if self.browser:
             self.draw_browser()
         if self.picker:
@@ -1594,13 +1684,7 @@ class App:
             self.text("LIVE CHOP", 36, 80, "l", ORANGE)
             self.text("%d of %d slice points" % (len(lv["marks"]), BANK), 604, 81, "m", TEXT, "r")
             self.box(36, 100, 568, 150, DARK, LINE, 4)
-            cols = len(lv["peaks"])
-            for i in range(cols):
-                f = i / cols
-                px = int(self.ox + (38 + f * 564) * self.u)
-                a = max(1, int(lv["peaks"][i] * 70 * self.u))
-                mid = int(self.oy + 175 * self.u)
-                pygame.draw.line(self.screen, TEAL if f <= pos else LINE, (px, mid - a), (px, mid + a), max(1, self.S(1.2)))
+            self.custom(self._live_wave, lv["peaks"], pos)
             for k, m in enumerate(lv["marks"]):
                 self.box(38 + m * 564, 100, 1.5, 150, ORANGE, None, 0)
                 self.text(str(k + 1), 41 + m * 564, 108, "s", ORANGE)
@@ -1625,7 +1709,23 @@ class App:
         if time.time() < self.toast_until:
             self.box(120, 300, 400, 24, ORANGE, None, 4)
             self.text(self.toast[:60], 320, 312, "m", DARK, "c")
-        pygame.display.flip()
+
+    def _dot(self, col):
+        pygame.draw.circle(self.screen, col, self.R(520, 15, 0, 0).topleft, self.S(5))
+
+    def _play_mark(self):
+        cx, cy = self.R(560, 15, 0, 0).topleft
+        s = self.S(6)
+        pygame.draw.polygon(self.screen, TEAL, [(cx - s, cy - s), (cx - s, cy + s), (cx + s, cy)])
+
+    def _live_wave(self, peaks, pos):
+        cols = len(peaks)
+        for i in range(cols):
+            f = i / cols
+            px = int(self.ox + (38 + f * 564) * self.u)
+            a = max(1, int(peaks[i] * 70 * self.u))
+            mid = int(self.oy + 175 * self.u)
+            pygame.draw.line(self.screen, TEAL if f <= pos else LINE, (px, mid - a), (px, mid + a), max(1, self.S(1.2)))
 
     @staticmethod
     def clip(s, n):
@@ -1634,15 +1734,19 @@ class App:
 
     def hints(self, s):
         """Button help along the bottom, in readable type; wraps onto a second line when it has to."""
-        color = mix(DIM, TEXT, 0.6)
-        parts = [p.strip() for p in s.split("   ") if p.strip()]
-        limit = 624 * self.u
-        if self.fonts["h"].size("    ".join(parts))[0] <= limit or len(parts) < 2:
-            self.text("    ".join(parts), 320, 346, "h", color, "c")
-            return
-        best = min(range(1, len(parts)), key=lambda k: abs(len("  ".join(parts[:k])) - len("  ".join(parts[k:]))))
-        self.text("    ".join(parts[:best]), 320, 338, "h", color, "c")
-        self.text("    ".join(parts[best:]), 320, 353, "h", color, "c")
+        rows = self.hint_rows.get(s)
+        if rows is None:
+            parts = [p.strip() for p in s.split("   ") if p.strip()]
+            if self.fonts["h"].size("    ".join(parts))[0] <= 624 * self.u or len(parts) < 2:
+                rows = [("    ".join(parts), 346)]
+            else:
+                best = min(range(1, len(parts)), key=lambda k: abs(len("  ".join(parts[:k])) - len("  ".join(parts[k:]))))
+                rows = [("    ".join(parts[:best]), 338), ("    ".join(parts[best:]), 353)]
+            self.hint_rows[s] = rows
+        if self.ops is not None:
+            self.area(0, 330, 640, 30)
+        for line, y in rows:
+            self.text(line, 320, y, "h", mix(DIM, TEXT, 0.6), "c")
 
     def bank_marker(self, x, y, small=False):
         """Four squares showing which bank of pads is on screen."""
@@ -1658,10 +1762,11 @@ class App:
         now = time.time()
         drum = 0 if "l2" in self.held else (8 if "r2" in self.held else None)
         first = self.base()
+        self.area(0, 29, 314, 301)
         for i, p in enumerate(self.bank_pads(), first):
             r, c = divmod(i - first, 4)
             x, y = 8 + c * 75, 34 + r * 75
-            glow = max(0.0, 1.0 - (now - e.pad_flash[i]) / 0.18)
+            glow = round(min(1.0, max(0.0, 1.0 - (now - e.pad_flash[i]) / 0.18)) * 3) / 3.0   # four steps; safe if the clock jumps
             base = PANEL if p.buf is not None else DARK
             fill = mix(base, TEAL, glow)
             self.box(x, y, 71, 71, fill, ORANGE if i == self.sel else LINE, 6, 2 if i == self.sel else 1)
@@ -1675,6 +1780,7 @@ class App:
                 self.box(x + 22, y + 22, 28, 22, ORANGE, None, 4)
                 self.text(DRUM_GLYPH.get(k, k), x + 36, y + 33, "m", DARK, "c")
         p = e.pads[self.sel]
+        self.area(314, 29, 326, 301)                    # the right half rarely changes while the pads flash
         self.box(318, 34, 314, 296, PANEL, LINE, 6)
         self.text("PAD %d" % (self.sel + 1), 330, 52, "l", ORANGE)
         self.text(p.name[:12], 540, 53, "m", TEXT, "r")
