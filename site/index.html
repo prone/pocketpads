@@ -108,6 +108,8 @@ code { font: 0.92em var(--mono); background: var(--paper-deep); padding: 0.1em 0
 .page { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 2.75rem; align-items: start; padding-top: 3.5rem; }
 .page:nth-of-type(even) { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); }
 .page:nth-of-type(even) .screen { order: 2; }
+.stack { display: grid; gap: 1.75rem; }
+.page:nth-of-type(even) .stack { order: 2; }
 .tab {
   display: inline-block; font: 700 0.95rem/1 var(--display); letter-spacing: 0.02em;
   background: var(--teal); color: #fff; padding: 0.4rem 0.7rem; border-radius: 5px; margin-bottom: 0.9rem;
@@ -260,10 +262,20 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   </div>
 
   <div class="page">
+    <div class="stack">
     <figure class="screen">
       <img src="img/chop_sound.png" width="1280" height="720" loading="lazy" alt="SOUND page: a long waveform with a short highlighted section between a start and an end marker, above volume, pitch, start, end and sample settings.">
       <figcaption>A pad playing one slice of a longer sample. The lit section is what you hear.</figcaption>
     </figure>
+    <figure class="screen">
+      <img src="img/sound_tools.png" width="1280" height="720" loading="lazy" alt="SOUND page scrolled down: reverse, fades, delay and reverb sends, choke, then the CHOP row selected, with FIT TO TEMPO and SPREAD below it.">
+      <figcaption>Further down the list: the sends, then Chop, Fit to tempo and Spread.</figcaption>
+    </figure>
+    <figure class="screen">
+      <img src="img/live_chop.png" width="1280" height="720" loading="lazy" alt="Live chop: the whole sample with a playhead moving through it and numbered orange lines where slice points have been dropped.">
+      <figcaption>Chopping live. Each tap of A drops a slice point as the sample plays.</figcaption>
+    </figure>
+    </div>
     <div>
       <span class="tab">SOUND</span>
       <h3>Shape each pad</h3>
