@@ -180,8 +180,9 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   <div class="nav-inner">
     <strong>PocketPads</strong>
     <a href="#how">How it works</a>
-    <a href="#pages">The five pages</a>
+    <a href="#pages">The six pages</a>
     <a href="#controls">Controls</a>
+    <a href="#midi">MIDI</a>
     <a href="#grainbrick">GrainBrick</a>
     <a href="#samples">Your samples</a>
     <a href="#inside">Under the hood</a>
@@ -207,16 +208,16 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   <h2>How it works</h2>
   <p>PocketPads is a drum machine in the MPC tradition. Everything follows one path, from a sound file to a finished loop.</p>
   <div class="path">
-    <div><b>Pads</b><span>Sixteen pads each hold one sound. A starter kit of drums and bass is built in, so it plays on first launch.</span></div>
-    <div><b>Steps</b><span>Each pad has a row of 16 or 32 steps. A filled step plays the pad at that moment in the bar.</span></div>
-    <div><b>Patterns</b><span>A project holds four patterns, A to D. Switch while playing and the change lands on the next bar.</span></div>
+    <div><b>Pads</b><span>Sixty-four pads in four banks of sixteen, one sound each. A starter kit of drums and bass is built in, so it plays on first launch.</span></div>
+    <div><b>Steps</b><span>Each pad has a row of 16 to 128 steps. A filled step plays the pad at that moment, at its own note if you give it one.</span></div>
+    <div><b>Patterns</b><span>A project holds eight patterns, A to H. Switch by hand, or chain them into a song that plays in order.</span></div>
     <div><b>Projects</b><span>Sixteen slots keep your pads, patterns, tempo and swing. Quitting saves the current one.</span></div>
   </div>
 </section>
 
 <section id="pages">
-  <h2>The five pages</h2>
-  <p>The tabs along the top are the five pages. <kbd>L1</kbd> and <kbd>R1</kbd> move between them. The bar also shows the current pattern, project slot, tempo, and an output meter.</p>
+  <h2>The six pages</h2>
+  <p>The tabs along the top are the six pages. <kbd>L1</kbd> and <kbd>R1</kbd> move between them. The bar also shows the current pattern, project slot, tempo, and an output meter.</p>
 
   <div class="page">
     <figure class="screen">
@@ -232,8 +233,9 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <dt><kbd class="face">B</kbd></dt><dd>Mute or unmute it</dd>
         <dt><kbd class="face">X</kbd></dt><dd>Record on or off. While the beat runs, what you play is written into the pattern on the nearest step.</dd>
         <dt><kbd class="face">Y</kbd></dt><dd>Jump to the SOUND page for this pad</dd>
-        <dt><kbd>L2</kbd> hold</dt><dd>Buttons play pads 1–8</dd>
-        <dt><kbd>R2</kbd> hold</dt><dd>Buttons play pads 9–16</dd>
+        <dt><kbd>L2</kbd> hold</dt><dd>Buttons play the first eight pads of the bank</dd>
+        <dt><kbd>R2</kbd> hold</dt><dd>Buttons play the other eight</dd>
+        <dt><kbd>SELECT</kbd>+<kbd class="face">Y</kbd></dt><dd>Next bank of pads. The four numbered squares show which bank is on screen.</dd>
         <dt><kbd>SELECT</kbd>+<kbd class="face">X</kbd></dt><dd>Note repeat on or off. With it on, holding a pad retriggers it in time, for rolls.</dd>
         <dt><kbd>SELECT</kbd>+<kbd>LEFT</kbd> <kbd>RIGHT</kbd></dt><dd>Repeat rate, from 1/4 to 1/32 including triplets</dd>
       </dl>
@@ -250,14 +252,34 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <h3>Draw the beat on a grid</h3>
       <p>One row per pad, one column per step. Move the cursor with the D-pad and fill in where each sound should hit.</p>
       <dl class="keys">
-        <dt><kbd class="face">A</kbd></dt><dd>Turn a step on or off</dd>
+        <dt><kbd class="face">A</kbd></dt><dd>Turn a step on or off. Keep it held and move to paint a run of steps, or wipe one.</dd>
         <dt><kbd class="face">Y</kbd></dt><dd>Accent the step (louder)</dd>
+        <dt><kbd>SELECT</kbd>+<kbd>LEFT</kbd> <kbd>RIGHT</kbd></dt><dd>Step note: move this step up or down a semitone, for basslines and melodies from one pad. The step shows its note.</dd>
+        <dt><kbd>SELECT</kbd>+<kbd>L2</kbd> <kbd>R2</kbd></dt><dd>Step note down or up an octave</dd>
         <dt><kbd class="face">B</kbd></dt><dd>Mute the track</dd>
         <dt><kbd class="face">X</kbd></dt><dd>Solo the track</dd>
         <dt><kbd>L2</kbd> <kbd>R2</kbd></dt><dd>Jump four steps</dd>
         <dt><kbd>SELECT</kbd>+<kbd class="face">A</kbd></dt><dd>Clear the track</dd>
         <dt><kbd>SELECT</kbd>+<kbd class="face">X</kbd></dt><dd>Clear the whole pattern</dd>
       </dl>
+    </div>
+  </div>
+
+  <div class="page">
+    <figure class="screen">
+      <img src="img/song.png" width="1280" height="720" loading="lazy" alt="SONG page: song mode on, a chain of pattern letters with the playing one lit, and rows to copy a pattern, clear it and set its length.">
+      <figcaption>A chain of patterns. The lit slot is the one playing.</figcaption>
+    </figure>
+    <div>
+      <span class="tab">SONG</span>
+      <h3>Chain patterns into a song</h3>
+      <p>Build each section of a track as its own pattern, then list the patterns in the order they should play. With song mode on, START plays the chain from the top and loops it.</p>
+      <ul>
+        <li><b>Chain.</b> Up to 64 slots. On the empty slot at the end, A adds the current pattern. On a filled slot, A and Y step through the patterns, X repeats the slot and B removes it.</li>
+        <li><b>Copy pattern.</b> Copies the current pattern to another letter and switches to it, the quick way to make a variation.</li>
+        <li><b>Clear pattern.</b> Empties the current pattern.</li>
+        <li><b>Length.</b> 16 to 128 steps per pattern. Left and right change it a bar at a time; hold Y to change it one step at a time for odd lengths.</li>
+      </ul>
     </div>
   </div>
 
@@ -289,6 +311,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <li><b>Mode.</b> One-shot plays to the end. Hold plays only while the button is down. Loop starts on one hit and stops on the next.</li>
         <li><b>Reverse, Fade in, Fade out, Fine tune.</b> Flip the sound, soften its edges, or tune it in cents.</li>
         <li><b>Chop.</b> Cut this pad's sample onto the pads: at detected hits, into 4, 8 or 16 equal pieces, or live, where the sample plays and you tap A wherever a new pad should begin.</li>
+        <li><b>Bit crush and Lo-fi rate.</b> Fewer bits adds grit; a lower sample rate gives the dull, ringing top of old samplers.</li>
         <li><b>Stretch.</b> Makes a sound longer or shorter, from half to double its length, without changing its pitch. Drum hits are kept sharp and on time; long held notes can turn a little grainy at large settings. Works on samples up to 30 seconds.</li>
         <li><b>Fit to tempo.</b> Makes a loop last exactly one beat, one bar or several bars at the project tempo. Fit style chooses how: Keep pitch stretches it, so the loop stays in key; Change pitch speeds it up or slows it down like a classic sampler.</li>
         <li><b>Spread.</b> Puts this sound on all sixteen pads a semitone apart, with this pad as the root, for bass lines and melodies.</li>
@@ -314,7 +337,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <div>
       <span class="tab">FX</span>
       <h3>Effects and live performance</h3>
-      <p>The left side sets the shared delay and reverb: delay time locked to the tempo, feedback, and reverb size. The right side is for playing the mix itself. Hold a face button and the effect applies to everything; let go and the sound snaps back.</p>
+      <p>The left side sets the master compressor, which pulls the whole mix together, and the shared delay and reverb: delay time locked to the tempo, feedback, and reverb size. The right side is for playing the mix itself. Hold a face button and the effect applies to everything; let go and the sound snaps back.</p>
       <dl class="keys">
         <dt><kbd class="face">A</kbd> hold</dt><dd>Stutter: loops the last slice of the beat</dd>
         <dt><kbd class="face">B</kbd> hold</dt><dd>Tape stop: the mix slows to a halt</dd>
@@ -337,8 +360,9 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <li><b>Record.</b> Ten seconds from the built-in microphone, cut at each hit and placed on the pads.</li>
         <li><b>Resample.</b> Records what PocketPads itself is playing, effects included, onto the selected pad. Press START to finish.</li>
         <li><b>Tempo and Swing.</b> 40 to 300 BPM. Swing uses the MPC scale: 50% is straight, 66% is a triplet shuffle, 75% is the most it goes.</li>
-        <li><b>Length.</b> 16 or 32 steps, set per pattern.</li>
+        <li><b>Export audio.</b> Saves the song, or four rounds of the current pattern, as a WAV file in <code>samples/exports/</code>.</li>
         <li><b>Master.</b> Overall output level.</li>
+        <li><b>MIDI out and MIDI devices.</b> See <a href="#midi">MIDI</a> below.</li>
         <li><b>Import Chops and GrainBrick.</b> The link to GrainBrick, <a href="#grainbrick">described below</a>.</li>
       </ul>
       <p>The panel on the right reports audio health: dropouts and peak load for the session.</p>
@@ -354,13 +378,25 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <tbody>
       <tr><td><kbd>START</kbd></td><td>Play or stop the beat</td></tr>
       <tr><td><kbd>L1</kbd> <kbd>R1</kbd></td><td>Previous or next page</td></tr>
-      <tr><td><kbd>SELECT</kbd>+<kbd>L1</kbd> <kbd>R1</kbd></td><td>Previous or next pattern (A–D)</td></tr>
+      <tr><td><kbd>SELECT</kbd>+<kbd>L1</kbd> <kbd>R1</kbd></td><td>Previous or next pattern (A–H)</td></tr>
+      <tr><td><kbd>SELECT</kbd>+<kbd class="face">Y</kbd></td><td>Next bank of pads (1–4)</td></tr>
       <tr><td><kbd>SELECT</kbd>+<kbd>UP</kbd> <kbd>DOWN</kbd></td><td>Tempo up or down by 1 BPM</td></tr>
       <tr><td><kbd>SELECT</kbd>+<kbd>START</kbd></td><td>Quit, saving the project to its slot</td></tr>
     </tbody>
   </table>
   </div>
   <p style="margin-top:1.5rem">Button names match what is printed on the Smart Pro: A is the right-hand face button and B is the bottom one.</p>
+</section>
+
+<section id="midi">
+  <h2>MIDI</h2>
+  <p>Plug a USB MIDI controller into the handheld and PocketPads connects to it by itself; the MIDI DEVICES row on the PROJ page shows what it found. This part is new and has not yet been tried with real hardware, so expect rough edges.</p>
+  <ul>
+    <li><b>Pads and keys.</b> Notes from C1 (note 36) upward play pads 1 to 64, with velocity.</li>
+    <li><b>Knobs.</b> The first eight knobs, in the order of their controller numbers, set the selected pad's volume, pitch, filter, delay, reverb, start, end and fade out.</li>
+    <li><b>MIDI out.</b> Choose a channel on the PROJ page and every pad that sounds also sends a note, with step notes included, so the sequencer can play an external synth. Clock, start and stop go out too, to keep other gear in time.</li>
+    <li><b>Start and stop</b> from a controller start and stop the beat.</li>
+  </ul>
 </section>
 
 <section id="grainbrick">
@@ -440,7 +476,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 
   <div class="status">
     <h3>Where it stands</h3>
-    <p>This is an early version, tested on one TrimUI Smart Pro running KNULLI Scarab. Pads, the step grid, patterns, projects, the GrainBrick link, note repeat, per-pad filter, delay and reverb, choke groups and the performance effects, microphone recording, chopping, resampling and time-stretch that keeps pitch are all in. Not built: chaining patterns into a song, lo-fi effects, and MIDI controllers.</p>
+    <p>This is an early version, tested on one TrimUI Smart Pro running KNULLI Scarab. Pads, the step grid, patterns, projects, the GrainBrick link, note repeat, per-pad filter, delay and reverb, choke groups and the performance effects, microphone recording, chopping, resampling, time-stretch, song mode, lo-fi, a master compressor, audio export and pad banks are all in. MIDI is in but untested with real controllers. Not built: Bluetooth MIDI, and naming projects.</p>
     <p>PocketPads is open source under the MIT licence. The code and install instructions are at <a href="https://github.com/prone/pocketpads">github.com/prone/pocketpads</a>.</p>
   </div>
 </section>

@@ -581,7 +581,7 @@ class App:
                     if len(song) >= SONG_SLOTS:
                         self.say("THE CHAIN IS FULL (%d)" % SONG_SLOTS)
                     else:
-                        song.append(e.cur_pat)
+                        song.append(e.cur_pat if e.pending_pat is None else e.pending_pat)
                         self.song_cur = len(song)
                 else:
                     song[self.song_cur] = (song[self.song_cur] + d) % NPAT
@@ -1669,7 +1669,7 @@ class App:
                 "FADE IN": "%d ms" % p.fin if p.fin else "OFF", "FADE OUT": "%d ms" % p.fout if p.fout else "OFF",
                 "CHOP": "%s   -  A to chop onto pads" % self.CHOPS[self.chop_mode][0],
                 "FIT TO TEMPO": "%s at %d BPM   -  A to fit" % (FITS[self.fit_idx][0], round(e.bpm)),
-                "SPREAD": "this sound on all 16 pads of the bank, a semitone apart  -  A",
+                "SPREAD": "across this bank's 16 pads, a semitone apart  -  A",
                 "SAMPLE": "%s   -  A to browse files" % (os.path.basename(p.path)[:34] or "(none)")}
         fracs = {"VOLUME": p.vol / 1.5, "PITCH": (p.pitch + 24) / 48.0, "FILTER": (p.filt + 100) / 200.0,
                  "FINE TUNE": (p.fine + 50) / 100.0, "BIT CRUSH": p.crush / (len(CRUSH_BITS) - 1.0),

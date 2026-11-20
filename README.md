@@ -10,7 +10,11 @@ A 16-pad sample sequencer and sampler for Linux handhelds, built for the TrimUI 
 
 ## Features
 
-- Sixteen pads, a 16 or 32 step grid with accents, four patterns, sixteen project slots
+- 64 pads in four banks of sixteen, a step grid of 16 to 128 steps with accents and a note per step, eight patterns, sixteen project slots
+- Song mode: chain patterns in order, copy and clear patterns
+- Lo-fi per pad (bit crush, sample-rate reduction) and a master compressor
+- Export the song or pattern as a WAV file
+- MIDI through the ALSA sequencer: controllers play pads and turn knobs; pads send notes, clock, start and stop (new, not yet tried with real hardware)
 - Per pad: volume, pitch and fine tune, one-knob filter, trim, fades, reverse, choke group, delay and reverb sends, and one-shot, hold or loop play modes
 - Note repeat, MPC-style swing (50 to 75%), and hold-to-apply stutter, tape stop and filter sweeps on the whole mix
 - Sampling: record ten seconds from the built-in microphone and have it chopped onto the pads
@@ -47,6 +51,7 @@ Environment variables:
 |---|---|
 | `PP_WINDOW=WxH` | Run in a window of that size instead of full screen |
 | `PP_NOAUDIO=1` | Do not open an audio device |
+| `PP_NOMIDI=1` | Do not open MIDI |
 | `PP_REC_DEVICE` | ALSA capture device for recording (default `hw:0,0`, the Smart Pro's microphone) |
 | `PP_GB_DIR` | Folder of a GrainBrick install to link to |
 | `PP_SCRIPT=file` | Play back a script of button presses, for testing (see `load_script` in `main.py`) |
@@ -65,6 +70,7 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 |---|---|
 | `pocketpads/engine.py` | The sound engine: pads, sequencer, effects, WAV reading and writing, project files. No pygame. |
 | `pocketpads/main.py` | Screens, input and everything the user touches |
+| `pocketpads/midi.py` | MIDI in and out through the ALSA sequencer (ctypes, no extra packages) |
 | `pocketpads/kit.py` | Synthesizes the starter kit and the demo beat |
 | `pocketpads/art/` | The artwork and the script that draws it |
 | `pocketpads/tests/` | Engine tests |
@@ -85,7 +91,8 @@ Each prints a line ending in `OK` when it passes.
 - Changing a pad setting re-renders that pad's audio; on samples longer than a few seconds this waits until you stop adjusting.
 - Converting a long MP3 pauses the screen until it finishes.
 - Stretch works on samples up to 30 seconds and pauses briefly while it renders (about 0.16 s per second of audio on the Smart Pro).
-- No MIDI yet.
+- MIDI has not been tried with real controllers yet, and Bluetooth MIDI devices are not connected automatically.
+- Projects are numbered, not named.
 
 ## Contributing
 
