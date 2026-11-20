@@ -1,0 +1,1470 @@
+"""PocketPads: a 16-pad sample sequencer for Linux handhelds."""
+import gc
+import glob
+import json
+import math
+import os
+import signal
+import struct
+import subprocess
+import sys
+import time
+import traceback
+
+import numpy as np
+import pygame
+
+import kit
+from engine import (APP_DIR, CHOKE_GROUPS, DELAY_TIMES, FITS, HOLD, MODES, NPADS, NPAT, RATES, SR, STUTTERS, Engine,
+                    find_chops, load_cached, load_wav, prune_cache, write_wav)
+
+SAMPLES = os.path.join(APP_DIR, "samples")
+PROJECTS = os.path.join(APP_DIR, "projects")
+STATE = os.path.join(APP_DIR, "state.json")
+PAGES = ["PLAY", "BEAT", "SOUND", "FX", "PROJ"]
+VERSION = "0.03"
+CONVERT_EXTS = (".mp3", ".flac", ".ogg", ".m4a", ".aac", ".aif", ".aiff", ".opus")   # read through ffmpeg
+CONVERT_SECONDS = 180
+REC_SECONDS = 10
+REC_DEVICE = "hw:0,0"     # the handheld's built-in microphone
+OPEN_GRAINBRICK = 42  # exit code the launcher script turns into "run GrainBrick, then come back"
+
+
+def find_grainbrick():
+    """GrainBrick's install folder, if it sits next to PocketPads in ports/."""
+    override = os.environ.get("PP_GB_DIR")
+    if override:
+        return override if os.path.isdir(override) else None
+    found = [d for d in glob.glob(os.path.join(os.path.dirname(APP_DIR), "grainbrick*"))
+             if os.path.isfile(os.path.join(d, "main.py"))]
+    return max(found, key=os.path.getmtime) if found else None
+
+
+GB_DIR = find_grainbrick()
+SLOTS = 16
+
+BG, PANEL, LINE = (17, 18, 23), (30, 32, 40), (72, 76, 90)
+TEXT, DIM = (228, 229, 235), (128, 132, 148)
+TEAL, ORANGE, RED, DARK = (62, 205, 182), (255, 152, 62), (236, 84, 84), (10, 11, 14)
+
+DIRS = ("up", "down", "left", "right")
+# Drum mode: these eight buttons play pads while L2 (pads 1-8) or R2 (pads 9-16) is held.
+DRUM_KEYS = ["left", "up", "right", "down", "Y", "X", "A", "B"]
+DRUM_GLYPH = {"left": "<", "up": "^", "right": ">", "down": "v"}
+
+KEYS = {pygame.K_UP: "up", pygame.K_DOWN: "down", pygame.K_LEFT: "left", pygame.K_RIGHT: "right",
+        pygame.K_z: "A", pygame.K_x: "B", pygame.K_s: "X", pygame.K_a: "Y",
+        pygame.K_q: "l1", pygame.K_w: "r1", pygame.K_1: "l2", pygame.K_2: "r2",
+        pygame.K_RETURN: "start", pygame.K_TAB: "select"}
+# SDL names buttons by position (its "a" is the bottom one). Handheld labels follow the
+# Nintendo layout, where the right-hand button is A, so map position -> printed label.
+PAD_BUTTONS = {"a": "B", "b": "A", "x": "Y", "y": "X", "leftshoulder": "l1", "rightshoulder": "r1",
+               "start": "start", "back": "select", "dpup": "up", "dpdown": "down",
+               "dpleft": "left", "dpright": "right"}
+
+
+def mix(a, b, t):
+    return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+class App:
+    def __init__(self):
+        self.log = open(os.path.join(APP_DIR, "pocketpads.log"), "w", buffering=1)
+        pygame.display.init()
+        pygame.font.init()
+        pygame.joystick.init()
+        win = os.environ.get("PP_WINDOW")
+        if win:
+            w, h = (int(v) for v in win.split("x"))
+            self.screen = pygame.display.set_mode((w, h))
+        else:
+            self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+        pygame.display.set_caption("PocketPads")
+        pygame.mouse.set_visible(False)
+        self.W, self.H = self.screen.get_size()
+        self.u = min(self.W / 640.0, self.H / 360.0)
+        self.ox = (self.W - 640 * self.u) / 2
+        self.oy = (self.H - 360 * self.u) / 2
+        self.fonts = {k: pygame.font.Font(None, max(8, int(s * self.u)))
+                      for k, s in (("s", 13), ("h", 16), ("m", 17), ("l", 26), ("xl", 40))}
+        self.cache = {}
+        self.print("screen %dx%d scale %.2f" % (self.W, self.H, self.u))
+        self.splash("LOADING")
+        splash_until = time.time() + (0 if os.environ.get("PP_SCRIPT") and not os.environ.get("PP_SPLASH") else 1.5)
+        self.init_controllers()
+
+        self.eng = Engine()
+        self.page, self.sel, self.cur_step = 0, 0, 0
+        self.sound_row, self.proj_row, self.fx_row = 0, 0, 0
+        self.holding = {}      # button -> pad it is repeating
+        self.recording = None
+        self.gated = {}        # button -> HOLD pad it is sounding
+        self.live = None       # live chop in progress
+        self.resampling = None
+        self.chop_mode, self.fit_idx = 0, 2
+        self.select_alone = False
+        self.audition = None   # (pad, start time) while the SOUND page is playing a pad
+        self.wheel, self.wheel_acc, self.wheel_seen = 0.0, 0.0, False
+        self.perf_held = {}    # button -> performance effect it is holding
+        self.slot = 1
+        self.held = set()
+        self.repeat = {}
+        self.toast, self.toast_until = "", 0
+        self.browser = None
+        self.picker = None
+        self.confirm = None
+        self.running = True
+        self.exit_code = 0
+        self.script = self.load_script()
+        self.script_wait = 0
+
+        os.makedirs(PROJECTS, exist_ok=True)
+        os.makedirs(SAMPLES, exist_ok=True)
+        self.kit_paths = kit.ensure_kit(os.path.join(SAMPLES, "kit"))
+        try:
+            with open(STATE) as f:
+                self.slot = min(SLOTS, max(1, int(json.load(f).get("slot", 1))))
+        except (OSError, ValueError):
+            pass
+        if os.path.exists(self.slot_path()):
+            self.load_project(quiet=True)
+        else:
+            self.new_project(quiet=True)
+        while time.time() < splash_until:      # keep the title up long enough to read
+            pygame.event.pump()
+            time.sleep(0.05)
+        # Keep the audio thread fed: hand over the interpreter quickly and avoid garbage-collection pauses.
+        sys.setswitchinterval(0.001)
+        gc.collect()
+        gc.freeze()
+        gc.disable()
+        self.eng.start_audio(enable=not os.environ.get("PP_NOAUDIO"))
+        if self.eng.audio_error:
+            self.print("audio error: " + self.eng.audio_error)
+            self.say("NO AUDIO: " + self.eng.audio_error, 6)
+
+    def print(self, msg):
+        self.log.write("%.2f %s\n" % (time.time() % 10000, msg))
+
+    def splash(self, status):
+        """Title screen shown while the kit and project load."""
+        self.screen.fill(BG)
+        try:
+            art = pygame.image.load(os.path.join(APP_DIR, "art", "pocketpads.png"))
+            h = int(210 * self.u)
+            w = int(art.get_width() * h / art.get_height())
+            art = pygame.transform.scale(art, (w, h))          # nearest-neighbour keeps the pixels crisp
+            self.screen.blit(art, (int(self.ox + 320 * self.u - w / 2), int(self.oy + 28 * self.u)))
+            pygame.draw.rect(self.screen, LINE, (int(self.ox + 320 * self.u - w / 2) - 2, int(self.oy + 28 * self.u) - 2,
+                                                 w + 4, h + 4), max(2, self.S(1)), self.S(4))
+        except (pygame.error, OSError) as e:
+            self.print("splash art missing: %s" % e)
+        self.text("PocketPads", 320, 272, "xl", TEXT, "c")
+        self.text("VERSION %s" % VERSION, 320, 302, "m", ORANGE, "c")
+        self.text(status, 320, 332, "s", DIM, "c")
+        pygame.display.flip()
+
+    # ------------------------------------------------------------ input
+    def init_controllers(self):
+        self.controllers, self.joysticks = [], []
+        try:
+            from pygame._sdl2 import controller
+            controller.init()
+            for i in range(pygame.joystick.get_count()):
+                if controller.is_controller(i):
+                    c = controller.Controller(i)
+                    self.controllers.append(c)
+                    self.print("controller %d: %s" % (i, c.name))
+        except Exception as e:
+            self.print("controller api unavailable: %r" % e)
+        if not self.controllers:
+            for i in range(pygame.joystick.get_count()):
+                j = pygame.joystick.Joystick(i)
+                j.init()
+                self.joysticks.append(j)
+                self.print("joystick %d: %s buttons=%d hats=%d" % (i, j.get_name(), j.get_numbuttons(), j.get_numhats()))
+        self.btn_names = {}
+        for name, label in PAD_BUTTONS.items():
+            const = getattr(pygame, "CONTROLLER_BUTTON_" + name.upper().replace("DP", "DPAD_"), None)
+            if const is not None:
+                self.btn_names[const] = label
+        self.trig_state = {}
+        self.hat_state = set()
+
+    def handle_event(self, e):
+        if e.type == pygame.QUIT:
+            self.running = False
+        elif e.type == pygame.KEYDOWN:
+            if e.key == pygame.K_ESCAPE:
+                self.running = False
+            elif e.key in KEYS:
+                self.button(KEYS[e.key], True)
+        elif e.type == pygame.KEYUP and e.key in KEYS:
+            self.button(KEYS[e.key], False)
+        elif e.type in (pygame.CONTROLLERBUTTONDOWN, pygame.CONTROLLERBUTTONUP):
+            down = e.type == pygame.CONTROLLERBUTTONDOWN
+            name = self.btn_names.get(e.button)
+            if down:
+                self.print("cbutton %s -> %s" % (e.button, name))
+            if name:
+                self.button(name, down)
+        elif e.type == pygame.CONTROLLERAXISMOTION:
+            if e.axis == pygame.CONTROLLER_AXIS_RIGHTX:
+                self.wheel = e.value / 32768.0
+                if not self.wheel_seen and abs(self.wheel) > 0.5:
+                    self.wheel_seen = True
+                    self.print("right stick seen: %.2f" % self.wheel)
+            name = {pygame.CONTROLLER_AXIS_TRIGGERLEFT: "l2", pygame.CONTROLLER_AXIS_TRIGGERRIGHT: "r2"}.get(e.axis)
+            if name:
+                down = e.value > 12000
+                if self.trig_state.get(name, False) != down:
+                    self.trig_state[name] = down
+                    self.button(name, down)
+        elif not self.controllers and e.type in (pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP):
+            down = e.type == pygame.JOYBUTTONDOWN
+            if down:
+                self.print("jbutton %s" % e.button)
+            name = self.joy_map().get(str(e.button))
+            if name:
+                self.button(name, down)
+        elif not self.controllers and e.type == pygame.JOYHATMOTION:
+            now = set()
+            if e.value[0] < 0: now.add("left")
+            if e.value[0] > 0: now.add("right")
+            if e.value[1] > 0: now.add("up")
+            if e.value[1] < 0: now.add("down")
+            for d in now - self.hat_state:
+                self.button(d, True)
+            for d in self.hat_state - now:
+                self.button(d, False)
+            self.hat_state = now
+
+    def joy_map(self):
+        if not hasattr(self, "_joy_map"):
+            try:
+                with open(os.path.join(APP_DIR, "buttons.json")) as f:
+                    self._joy_map = json.load(f)
+            except (OSError, ValueError):
+                self._joy_map = {}
+        return self._joy_map
+
+    def button(self, name, down):
+        if down:
+            if name in self.held:
+                return
+            self.held.add(name)
+            self.select_alone = name == "select"       # any other press while SELECT is down makes it a combo
+            if name in DIRS:
+                self.repeat[name] = time.time() + 0.32
+            self.press(name)
+        else:
+            self.held.discard(name)
+            self.repeat.pop(name, None)
+            if name == "select" and self.select_alone and PAGES[self.page] == "SOUND" and not (
+                    self.confirm or self.browser or self.picker or self.recording or self.live):
+                self.toggle_audition()                 # a tap of SELECT on its own: play / stop
+            pad = self.holding.pop(name, None)
+            if pad is not None:
+                self.eng.release(pad)
+            pad = self.gated.pop(name, None)
+            if pad is not None:
+                self.eng.note_off(pad)
+            fx = self.perf_held.pop(name, None)
+            if fx:
+                self.eng.perf[fx] = False
+
+    def tick_repeat(self):
+        now = time.time()
+        for name, t in list(self.repeat.items()):
+            if now >= t:
+                self.repeat[name] = now + 0.07
+                self.press(name, repeat=True)
+
+    def tick_wheel(self, dt):
+        """The right stick is a data wheel: push it sideways to change the selected value."""
+        v = self.wheel
+        busy = self.confirm or self.browser or self.picker or self.recording or self.live
+        if abs(v) < 0.25 or busy or PAGES[self.page] not in ("SOUND", "FX", "PROJ"):
+            self.wheel_acc = 0.0
+            return
+        push = (abs(v) - 0.25) / 0.75
+        self.wheel_acc += dt * (2.0 + 38.0 * push * push)      # 2 to 40 changes a second
+        while self.wheel_acc >= 1.0:
+            self.wheel_acc -= 1.0
+            self.press("right" if v > 0 else "left", repeat=True)
+
+    # ------------------------------------------------------------ actions
+    def say(self, msg, secs=1.6):
+        self.toast, self.toast_until = msg, time.time() + secs
+
+    def slot_path(self, slot=None):
+        return os.path.join(PROJECTS, "P%02d.json" % (slot or self.slot))
+
+    def save_project(self, quiet=False):
+        try:
+            self.eng.save(self.slot_path())
+            with open(STATE, "w") as f:
+                json.dump({"slot": self.slot}, f)
+            if not quiet:
+                self.say("SAVED P%02d" % self.slot)
+        except OSError as e:
+            self.say("SAVE FAILED: %s" % e, 4)
+
+    def load_project(self, quiet=False):
+        if not os.path.exists(self.slot_path()):
+            self.say("P%02d IS EMPTY" % self.slot)
+            return
+        try:
+            self.eng.stop()
+            missing = self.eng.load(self.slot_path())
+            if missing:
+                self.say("%d SAMPLE(S) MISSING" % len(missing), 4)
+            elif not quiet:
+                self.say("LOADED P%02d" % self.slot)
+        except (OSError, ValueError) as e:
+            self.say("LOAD FAILED: %s" % e, 4)
+
+    def new_project(self, quiet=False):
+        self.eng.stop()
+        self.eng.from_dict({"bpm": 112})
+        pads = self.eng.pads
+        for p, path in zip(pads, self.kit_paths):
+            p.load(path)
+        pads[4].choke = pads[5].choke = 1          # closed hat cuts the open hat
+        pads[1].rsend, pads[2].rsend = 0.15, 0.25  # a little room on snare and clap
+        pads[11].dsend, pads[14].dsend, pads[14].rsend = 0.25, 0.3, 0.15
+        kit.demo_patterns(self.eng.patterns)
+        if not quiet:
+            self.say("NEW PROJECT (STARTER KIT)")
+
+    def press(self, b, repeat=False):
+        e = self.eng
+        sel = "select" in self.held
+        if self.recording:
+            if b in ("A", "B", "start"):
+                self.stop_record()
+            return
+        if self.live:
+            if b in ("A", "Y", "l2", "r2"):
+                self.live_mark()
+            elif b in ("B", "start"):
+                self.live_finish()
+            elif b == "X":
+                self.live_finish(cancel=True)
+            return
+        if self.resampling and b == "start" and not sel:
+            self.finish_resample()
+            return
+        if self.confirm:
+            if b == "A":
+                msg, fn = self.confirm
+                self.confirm = None
+                fn()
+            elif b == "B":
+                self.confirm = None
+            return
+        if self.browser:
+            return self.press_browser(b)
+        if self.picker:
+            return self.press_picker(b)
+        # global controls
+        if b == "start":
+            if sel:
+                self.running = False
+            else:
+                e.toggle_play()
+            return
+        if b in ("l1", "r1"):
+            d = -1 if b == "l1" else 1
+            if sel:
+                e.select_pattern(((e.pending_pat if e.pending_pat is not None else e.cur_pat) + d) % NPAT)
+            else:
+                self.page = (self.page + d) % len(PAGES)
+            return
+        if sel and b in ("up", "down"):
+            e.bpm = float(min(300, max(40, round(e.bpm) + (1 if b == "up" else -1))))
+            return
+        getattr(self, "press_" + PAGES[self.page].lower())(b, sel)
+
+    def press_play(self, b, sel):
+        e = self.eng
+        for mod, base in (("l2", 0), ("r2", 8)):
+            if mod in self.held and b in DRUM_KEYS:
+                i = base + DRUM_KEYS.index(b)
+                self.sel = i
+                self.hit(i, b)
+                return
+        if sel and b == "X":
+            e.repeat_on = not e.repeat_on
+            self.say("NOTE REPEAT %s: HOLD A PAD" % RATES[e.repeat_div][0] if e.repeat_on else "NOTE REPEAT OFF")
+        elif sel and b in ("left", "right"):
+            e.repeat_div = (e.repeat_div + (1 if b == "right" else -1)) % len(RATES)
+            self.say("REPEAT RATE %s" % RATES[e.repeat_div][0], 1.0)
+        elif b in DIRS:
+            r, c = divmod(self.sel, 4)
+            if b == "up": r = (r - 1) % 4
+            if b == "down": r = (r + 1) % 4
+            if b == "left": c = (c - 1) % 4
+            if b == "right": c = (c + 1) % 4
+            self.sel = r * 4 + c
+        elif b == "A":
+            self.hit(self.sel, b)
+        elif b == "B":
+            p = e.pads[self.sel]
+            p.mute = not p.mute
+        elif b == "X":
+            e.rec = not e.rec
+            self.say("RECORD ON: PLAY PADS WHILE RUNNING" if e.rec else "RECORD OFF")
+        elif b == "Y":
+            self.page = PAGES.index("SOUND")
+
+    def hit(self, pad, button):
+        """Play a pad; with note repeat on it keeps firing until the button is released."""
+        if self.eng.repeat_on:
+            self.eng.hold(pad)
+            self.holding[button] = pad
+        else:
+            self.eng.trigger(pad)
+            if self.eng.pads[pad].mode == HOLD:
+                self.gated[button] = pad
+
+    def press_beat(self, b, sel):
+        e = self.eng
+        pat = e.patterns[e.cur_pat]
+        row = pat["steps"][self.sel]
+        self.cur_step = min(self.cur_step, pat["length"] - 1)
+        if b == "up":
+            self.sel = (self.sel - 1) % NPADS
+        elif b == "down":
+            self.sel = (self.sel + 1) % NPADS
+        elif b == "left":
+            self.cur_step = (self.cur_step - 1) % pat["length"]
+        elif b == "right":
+            self.cur_step = (self.cur_step + 1) % pat["length"]
+        elif b in ("l2", "r2"):
+            self.cur_step = (self.cur_step + (-4 if b == "l2" else 4)) % pat["length"]
+        elif b == "A" and sel:
+            self.confirm = ("CLEAR TRACK %d?" % (self.sel + 1), lambda: row.__setitem__(slice(None), [0] * len(row)))
+        elif b == "X" and sel:
+            def clear():
+                for r in pat["steps"]:
+                    r[:] = [0] * len(r)
+            self.confirm = ("CLEAR PATTERN %s?" % "ABCD"[e.cur_pat], clear)
+        elif b == "A":
+            row[self.cur_step] = 0 if row[self.cur_step] else 1
+            if row[self.cur_step] and not e.playing:
+                e.trigger(self.sel)
+        elif b == "Y":
+            row[self.cur_step] = 1 if row[self.cur_step] == 2 else 2
+        elif b == "B":
+            p = e.pads[self.sel]
+            p.mute = not p.mute
+        elif b == "X":
+            p = e.pads[self.sel]
+            p.solo = not p.solo
+
+    SOUND_ROWS = ["WAVEFORM", "SAMPLE", "VOLUME", "PITCH", "FINE TUNE", "FILTER", "START", "END", "MODE", "REVERSE", "FADE IN",
+                  "FADE OUT", "DELAY", "REVERB", "CHOKE", "CHOP", "FIT TO TEMPO", "SPREAD"]
+    CHOPS = [("AT HITS", 0), ("4 EQUAL", 4), ("8 EQUAL", 8), ("16 EQUAL", 16), ("LIVE: TAP AS IT PLAYS", -1)]
+
+    def press_sound(self, b, sel):
+        e = self.eng
+        p = e.pads[self.sel]
+        if sel and b in ("left", "right"):
+            self.sel = (self.sel + (1 if b == "right" else -1)) % NPADS
+        elif b in ("l2", "r2"):
+            self.sel = (self.sel + (1 if b == "r2" else -1)) % NPADS
+        elif b == "up":
+            self.sound_row = (self.sound_row - 1) % len(self.SOUND_ROWS)
+        elif b == "down":
+            self.sound_row = (self.sound_row + 1) % len(self.SOUND_ROWS)
+        elif b in ("left", "right"):
+            d = (1 if b == "right" else -1) * (5 if "Y" in self.held else 1)
+            row = self.SOUND_ROWS[self.sound_row]
+            if row == "WAVEFORM":          # nudge the start point; hold SELECT for the end is taken, so use START/END rows
+                p.start = round(min(p.end - 0.002, max(0.0, p.start + 0.002 * d)), 3)
+                p.bake()
+            elif row == "VOLUME":
+                p.vol = round(min(1.5, max(0.0, p.vol + 0.05 * d)), 2)
+            elif row == "PITCH":
+                p.pitch = int(min(24, max(-24, p.pitch + d)))
+                p.bake()
+            elif row == "FILTER":
+                p.filt = int(min(100, max(-100, p.filt + 2 * d)))
+                p.bake()
+            elif row == "FINE TUNE":
+                p.fine = int(min(50, max(-50, p.fine + d)))
+                p.bake()
+            elif row == "MODE":
+                p.mode = (p.mode + (1 if d > 0 else -1)) % len(MODES)
+            elif row == "REVERSE":
+                p.rev = not p.rev
+                p.bake()
+            elif row in ("FADE IN", "FADE OUT"):
+                k = "fin" if row == "FADE IN" else "fout"
+                setattr(p, k, int(min(2000, max(0, getattr(p, k) + 10 * d))))
+                p.bake()
+            elif row == "CHOP":
+                self.chop_mode = (self.chop_mode + (1 if d > 0 else -1)) % len(self.CHOPS)
+            elif row == "FIT TO TEMPO":
+                self.fit_idx = (self.fit_idx + (1 if d > 0 else -1)) % len(FITS)
+            elif row == "DELAY":
+                p.dsend = round(min(1.0, max(0.0, p.dsend + 0.05 * d)), 2)
+            elif row == "REVERB":
+                p.rsend = round(min(1.0, max(0.0, p.rsend + 0.05 * d)), 2)
+            elif row == "CHOKE":
+                p.choke = (p.choke + (1 if d > 0 else -1)) % (CHOKE_GROUPS + 1)
+            elif row == "START":
+                p.start = round(min(p.end - 0.002, max(0.0, p.start + 0.002 * d)), 3)
+                p.bake()
+            elif row == "END":
+                p.end = round(min(1.0, max(p.start + 0.002, p.end + 0.002 * d)), 3)
+                p.bake()
+            elif row == "SAMPLE":
+                self.open_browser()
+        elif b == "A":
+            row = self.SOUND_ROWS[self.sound_row]
+            if row == "SAMPLE":
+                self.open_browser()
+            elif row in ("CHOP", "FIT TO TEMPO", "SPREAD") and p.raw is None:
+                self.say("THIS PAD HAS NO SAMPLE")
+            elif row == "CHOP":
+                self.start_chop()
+            elif row == "FIT TO TEMPO":
+                self.fit_to_tempo()
+            elif row == "SPREAD":
+                self.confirm = ("SPREAD PAD %d ACROSS ALL 16 PADS?" % (self.sel + 1), self.spread)
+            else:
+                self.toggle_audition()
+        elif b == "X":
+            self.open_browser()
+        elif b == "B":
+            self.page = PAGES.index("PLAY")
+
+    # ------------------------------------------------------------ sampler tools
+    def start_chop(self):
+        p = self.eng.pads[self.sel]
+        label, count = self.CHOPS[self.chop_mode]
+        if count < 0:
+            self.eng.stop()
+            self.eng.preview(self.sel, p.raw)
+            self.live = {"pad": self.sel, "path": p.path, "n": len(p.raw), "peaks": p.peaks, "t0": time.time(), "marks": []}
+            return
+        a, z = p.start, p.end
+        if count:
+            edges = [a + (z - a) * i / count for i in range(count + 1)]
+            slices = list(zip(edges, edges[1:]))
+        else:
+            n = len(p.raw)
+            seg = p.raw[int(a * n):max(int(a * n) + 16, int(z * n))]
+            slices = [(a + (z - a) * s, a + (z - a) * t) for s, t in find_chops(seg, NPADS)]
+        if len(slices) < 2:
+            self.say("ONLY ONE HIT FOUND - TRY EQUAL OR LIVE", 3)
+            return
+        path = p.path
+        self.confirm = ("CHOP INTO %d? REPLACES PADS 1-%d" % (len(slices), len(slices)),
+                        lambda: (self.put_slices(path, slices), self.say("%d CHOPS ON THE PADS" % len(slices), 2.5)))
+
+    def live_pos(self):
+        lv = self.live
+        return (time.time() - lv["t0"] - 0.06) * SR / lv["n"]      # 0.06 s: output delay
+
+    def live_mark(self):
+        lv = self.live
+        pos = min(0.999, max(0.0, self.live_pos()))
+        if len(lv["marks"]) < NPADS and (not lv["marks"] or pos - lv["marks"][-1] > 0.03 * SR / lv["n"]):
+            lv["marks"].append(pos)
+
+    def live_finish(self, cancel=False):
+        lv, self.live = self.live, None
+        self.eng.note_off(lv["pad"])
+        marks = lv["marks"]
+        if cancel or not marks:
+            self.say("CHOP CANCELLED" if cancel else "NO SLICE POINTS WERE TAPPED", 2)
+            return
+        self.put_slices(lv["path"], list(zip(marks, marks[1:] + [1.0])))
+        self.say("%d CHOPS ON THE PADS" % len(marks), 2.5)
+
+    def tick_live(self):
+        if self.live and self.live_pos() >= 1.0:
+            self.live_finish()
+
+    def fit_to_tempo(self):
+        """Repitch the pad so it lasts an exact number of beats at the project tempo."""
+        p = self.eng.pads[self.sel]
+        label, beats = FITS[self.fit_idx]
+        semis = 12.0 * math.log2(p.region_seconds() / (beats * 60.0 / self.eng.bpm))
+        if abs(semis) > 24:
+            self.say("TOO FAR: THAT NEEDS %+d SEMITONES" % round(semis), 3)
+            return
+        p.pitch = int(round(semis))
+        p.fine = int(round((semis - p.pitch) * 100))
+        p.bake()
+        self.say("FITTED TO %s: PITCH %+d, FINE %+d" % (label, p.pitch, p.fine), 3)
+
+    def spread(self):
+        """Chromatic mode: this pad's sound on every pad, one semitone apart, this pad as the root."""
+        src = self.eng.pads[self.sel]
+        base = src.name.split(" ")[0][:8]
+        for i, q in enumerate(self.eng.pads):
+            if q is src:
+                continue
+            q.clear()
+            q.raw, q.peaks, q.path = src.raw, src.peaks, src.path
+            q.copy_settings(src)
+            q.pitch = int(min(24, max(-24, src.pitch + i - self.sel)))
+            q.name = "%s %+d" % (base, i - self.sel)
+            q.bake()
+        prune_cache(self.eng.pads)
+        self.page = PAGES.index("PLAY")
+        self.say("PAD %d SPREAD ACROSS THE PADS" % (self.sel + 1), 2.5)
+
+    def start_resample(self):
+        self.eng.capture_start()
+        if not self.eng.playing:
+            self.eng.play()
+        self.resampling = time.time()
+        self.page = PAGES.index("FX")
+        self.say("RESAMPLING: PLAY, THEN PRESS START TO FINISH", 4)
+
+    def finish_resample(self):
+        self.resampling = None
+        self.eng.stop()
+        audio = self.eng.capture_stop()
+        loud = np.nonzero(np.abs(audio).max(axis=1) > 0.003)[0] if len(audio) else []
+        if len(loud) < 2000:
+            self.say("NOTHING WAS PLAYING", 3)
+            return
+        audio = audio[max(0, loud[0] - 64):loud[-1] + 2205]
+        folder = os.path.join(APP_DIR, "samples", "resampled")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, time.strftime("RS %Y-%m-%d %H-%M-%S.wav"))
+        try:
+            write_wav(path, audio / max(1.0, float(np.abs(audio).max())))
+            p = self.eng.pads[self.sel]
+            p.clear()
+            p.load(path)
+            p.name = "RESAMPLE"
+        except (OSError, ValueError) as e:
+            self.say("RESAMPLE FAILED: %s" % e, 4)
+            return
+        prune_cache(self.eng.pads)
+        self.page = PAGES.index("SOUND")
+        self.say("%.1f s RESAMPLED TO PAD %d" % (len(audio) / SR, self.sel + 1), 3)
+
+    def toggle_audition(self):
+        """Play the selected pad, or stop it if it is already sounding."""
+        if self.auditioning() is not None:
+            self.eng.note_off(self.sel)
+            self.audition = None
+        elif self.eng.pads[self.sel].buf is not None:
+            self.eng.trigger(self.sel)
+            self.audition = (self.sel, time.time())
+
+    def auditioning(self):
+        """How far through the selected pad's sound the SOUND-page preview is (0..1), or None if stopped."""
+        if not self.audition or self.audition[0] != self.sel:
+            return None
+        p = self.eng.pads[self.sel]
+        secs = p.seconds()
+        if secs <= 0:
+            return None
+        t = (time.time() - self.audition[1] - 0.06) / secs
+        if t >= 1.0:
+            if p.mode != 2:
+                self.audition = None
+                return None
+            t %= 1.0
+        return max(0.0, t)
+
+    FX_ROWS = ["DELAY TIME", "DELAY FEEDBACK", "REVERB SIZE", "STUTTER LENGTH", "REPEAT RATE"]
+    PERFORM = {"A": ("stutter", "STUTTER"), "B": ("tape", "TAPE STOP"), "X": ("lp", "LOW-PASS"), "Y": ("hp", "HIGH-PASS")}
+
+    def press_fx(self, b, sel):
+        e = self.eng
+        if b in self.PERFORM:
+            fx = self.PERFORM[b][0]
+            e.perf[fx] = True
+            self.perf_held[b] = fx
+        elif b == "up":
+            self.fx_row = (self.fx_row - 1) % len(self.FX_ROWS)
+        elif b == "down":
+            self.fx_row = (self.fx_row + 1) % len(self.FX_ROWS)
+        elif b in ("left", "right"):
+            d = 1 if b == "right" else -1
+            row = self.FX_ROWS[self.fx_row]
+            if row == "DELAY TIME":
+                e.delay_div = (e.delay_div + d) % len(DELAY_TIMES)
+            elif row == "DELAY FEEDBACK":
+                e.delay_fb = round(min(0.9, max(0.0, e.delay_fb + 0.05 * d)), 2)
+            elif row == "REVERB SIZE":
+                e.reverb_size = round(min(1.0, max(0.0, e.reverb_size + 0.05 * d)), 2)
+            elif row == "STUTTER LENGTH":
+                e.stutter_div = (e.stutter_div + d) % len(STUTTERS)
+            elif row == "REPEAT RATE":
+                e.repeat_div = (e.repeat_div + d) % len(RATES)
+
+    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "PROJECT", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "LENGTH", "MASTER"]
+                 + (["IMPORT CHOPS", "GRAINBRICK"] if GB_DIR else []) + ["QUIT"])
+
+    def press_proj(self, b, sel):
+        e = self.eng
+        row = self.PROJ_ROWS[self.proj_row]
+        if b == "up":
+            self.proj_row = (self.proj_row - 1) % len(self.PROJ_ROWS)
+        elif b == "down":
+            self.proj_row = (self.proj_row + 1) % len(self.PROJ_ROWS)
+        elif b in ("left", "right"):
+            d = 1 if b == "right" else -1
+            big = 5 if "Y" in self.held else 1
+            if row == "PROJECT":
+                self.slot = (self.slot - 1 + d) % SLOTS + 1
+            elif row == "TEMPO":
+                e.bpm = float(min(300, max(40, round(e.bpm) + d * big)))
+            elif row == "SWING":
+                e.swing = float(min(75, max(50, round(e.swing) + d * big)))
+            elif row == "LENGTH":
+                e.patterns[e.cur_pat]["length"] = 32 if d > 0 else 16
+            elif row == "MASTER":
+                e.master = round(min(1.5, max(0.0, e.master + 0.05 * d)), 2)
+        elif b == "A":
+            if row == "SAVE":
+                if os.path.exists(self.slot_path()):
+                    self.confirm = ("OVERWRITE P%02d?" % self.slot, self.save_project)
+                else:
+                    self.save_project()
+            elif row == "LOAD":
+                self.confirm = ("LOAD P%02d? UNSAVED CHANGES ARE LOST" % self.slot, self.load_project)
+            elif row == "NEW":
+                self.confirm = ("START A NEW PROJECT?", self.new_project)
+            elif row == "RECORD MIC":
+                self.confirm = ("RECORD %d SECONDS? REPLACES ALL PADS" % REC_SECONDS, self.start_record)
+            elif row == "RESAMPLE":
+                self.confirm = ("RESAMPLE THE OUTPUT TO PAD %d?" % (self.sel + 1), self.start_resample)
+            elif row == "IMPORT CHOPS":
+                items = self.gb_projects()
+                if items:
+                    self.picker = {"title": "IMPORT CHOPS FROM A GRAINBRICK PROJECT", "items": items, "idx": 0,
+                                   "fn": self.import_chops}
+                else:
+                    self.say("NO GRAINBRICK PROJECTS WITH SLICES FOUND", 3)
+            elif row == "GRAINBRICK":
+                def go():
+                    self.exit_code = OPEN_GRAINBRICK
+                    self.running = False
+                self.confirm = ("OPEN GRAINBRICK? QUIT IT TO COME BACK HERE", go)
+            elif row == "QUIT":
+                self.running = False
+
+    # ------------------------------------------------------------ GrainBrick link
+    def gb_projects(self):
+        """GrainBrick projects that have a sample and slice points, newest first."""
+        out = []
+        files = glob.glob(os.path.join(GB_DIR, "projects", "*.json"))
+        for f in sorted(files, key=os.path.getmtime, reverse=True):
+            try:
+                with open(f) as fh:
+                    d = json.load(fh)
+                cuts = (d.get("rhythm") or {}).get("boundaries") or []
+                if (d.get("sample") or {}).get("path") and len(cuts) >= 3:
+                    name = d.get("name") or os.path.splitext(os.path.basename(f))[0]
+                    out.append(("%s   (%d slices)" % (name, len(cuts) - 1), f))
+            except (OSError, ValueError, AttributeError):
+                continue
+        return out
+
+    def import_chops(self, project_file):
+        """Put a GrainBrick project's slices on the pads, one slice per pad, starting at pad 1."""
+        try:
+            with open(project_file) as fh:
+                d = json.load(fh)
+            sp = d["sample"]["path"]
+            path = sp if os.path.isabs(sp) else os.path.join(GB_DIR, sp)
+            cuts = sorted(min(1.0, max(0.0, float(x))) for x in d["rhythm"]["boundaries"])
+            slices = [(a, z) for a, z in zip(cuts, cuts[1:]) if z - a > 0.0005]
+            load_cached(path)
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            self.say("IMPORT FAILED: %s" % e, 4)
+            return
+        total = len(slices)
+        self.put_slices(path, slices[:NPADS])
+        extra = "  (FIRST 16 OF %d)" % total if total > NPADS else ""
+        self.say("IMPORTED %d CHOPS%s" % (min(total, NPADS), extra), 3)
+
+    def put_slices(self, path, slices):
+        """One slice per pad, starting at pad 1."""
+        self.eng.stop()
+        for p, (a, z) in zip(self.eng.pads, slices):
+            p.clear()
+            p.load(path)
+            p.start, p.end = a, z
+            p.bake()
+        for i, p in enumerate(self.eng.pads[:len(slices)]):
+            p.name = "CHOP %d" % (i + 1)
+        prune_cache(self.eng.pads)
+        self.sel, self.page = 0, PAGES.index("PLAY")
+
+    # ------------------------------------------------------------ record and chop
+    def start_record(self):
+        """Record from the built-in microphone; the take is chopped onto the pads when it ends."""
+        self.eng.stop()
+        folder = os.path.join(APP_DIR, "samples", "recorded")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, time.strftime("REC %Y-%m-%d %H-%M-%S.wav"))
+        fake = os.environ.get("PP_REC_FAKE")
+        if fake:
+            cmd = ["cp", fake, path]
+        else:
+            # This sound chip needs the first mic boost on and these gains, or capture fails.
+            for ctl, val in (("ADCL Input MIC1 Boost", "on"), ("MIC1 gain volume", "31"), ("ADC volume", "160,160")):
+                try:
+                    subprocess.run(["amixer", "-c", "0", "sset", ctl, val], capture_output=True, timeout=3)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            cmd = ["arecord", "-q", "-D", REC_DEVICE, "-f", "S16_LE", "-r", "48000", "-c", "1",
+                   "-d", str(REC_SECONDS), path]
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        except OSError as e:
+            self.say("CANNOT RECORD: %s" % e, 4)
+            return
+        self.recording = {"proc": proc, "path": path, "t0": time.time(), "level": 0.0}
+        self.print("record start: %s" % " ".join(cmd))
+
+    def tick_record(self):
+        r = self.recording
+        if not r:
+            return
+        try:                                    # live level from the tail of the growing file
+            with open(r["path"], "rb") as f:
+                f.seek(max(44, os.path.getsize(r["path"]) - 4800) & ~1)
+                tail = f.read()
+            vals = struct.unpack("<%dh" % (len(tail) // 2), tail[:len(tail) // 2 * 2])
+            if vals:
+                r["level"] = max(r["level"] * 0.7, max(map(abs, vals)) / 32768.0)
+        except (OSError, struct.error):
+            pass
+        if r["proc"].poll() is None:
+            if time.time() - r["t0"] > REC_SECONDS + 3:
+                r["proc"].kill()
+            return
+        self.recording = None
+        err = (r["proc"].stderr.read() or b"").decode("utf-8", "replace").strip()
+        self.finish_record(r["path"], err)
+
+    def stop_record(self):
+        if self.recording and self.recording["proc"].poll() is None:
+            self.recording["proc"].send_signal(signal.SIGINT)   # arecord closes the file properly
+
+    def finish_record(self, path, err):
+        try:
+            raw = load_wav(path)
+            mono = raw.mean(axis=1).astype(np.float64)
+            mono -= mono.mean()
+            peak = float(np.abs(mono).max()) if len(mono) else 0.0
+            if len(mono) < 4410 or peak < 0.002:
+                raise ValueError("no sound was captured")
+            write_wav(path, mono / peak * 0.9)
+            raw, _ = load_cached(path)
+            slices = find_chops(raw, NPADS)
+        except (OSError, ValueError) as e:
+            self.print("record failed: %s | %s" % (e, err))
+            busy = "busy" in err.lower()
+            self.say("MIC IS BUSY - RESTART THE DEVICE" if busy else ("RECORDING FAILED: %s" % (err or e))[:60], 5)
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            return
+        self.put_slices(path, slices)
+        for p in self.eng.pads[len(slices):]:
+            p.clear()
+        self.print("record ok: %.1f s peak %.3f, %d chops" % (len(mono) / 44100.0, peak, len(slices)))
+        self.say("RECORDED %d CHOPS ONTO THE PADS" % len(slices), 3)
+
+    def press_picker(self, b):
+        pk = self.picker
+        if b == "B":
+            self.picker = None
+        elif b == "up":
+            pk["idx"] = (pk["idx"] - 1) % len(pk["items"])
+        elif b == "down":
+            pk["idx"] = (pk["idx"] + 1) % len(pk["items"])
+        elif b == "A":
+            self.picker = None
+            pk["fn"](pk["items"][pk["idx"]][1])
+
+    # ------------------------------------------------------------ sample browser
+    def roots(self):
+        r = [("MY SAMPLES", SAMPLES)]
+        if GB_DIR:
+            for label, sub in (("GRAINBRICK RECORDINGS", "recordings"), ("GRAINBRICK SAMPLES", "samples")):
+                d = os.path.join(GB_DIR, sub)
+                if os.path.isdir(d):
+                    r.append((label, d))
+        return r
+
+    def root_of(self, path):
+        ap = os.path.abspath(path)
+        for label, d in self.roots():
+            rd = os.path.abspath(d)
+            if ap == rd or ap.startswith(rd + os.sep):
+                return label, rd
+        return None
+
+    def open_browser(self):
+        p = self.eng.pads[self.sel]
+        d = os.path.dirname(p.path) if p.path else SAMPLES
+        if not os.path.isdir(d) or not self.root_of(d):
+            d = SAMPLES
+        self.browser = {"dir": d, "items": [], "idx": 0}
+        self.browser_list(os.path.basename(p.path) if p.path else None)
+
+    def browser_list(self, focus=None):
+        br = self.browser
+        if br["dir"] is None:
+            items = [("root", label) for label, _ in self.roots()]
+        else:
+            try:
+                names = sorted(os.listdir(br["dir"]), key=str.lower)
+            except OSError:
+                names = []
+            dirs = [n for n in names if not n.startswith(".") and os.path.isdir(os.path.join(br["dir"], n))]
+            wavs = [n for n in names if not n.startswith(".") and n.lower().endswith((".wav",) + CONVERT_EXTS)]
+            items = [("dir", n) for n in dirs] + [("wav", n) for n in wavs]
+            at_root = self.root_of(br["dir"])[1] == os.path.abspath(br["dir"])
+            if not at_root or len(self.roots()) > 1:
+                items.insert(0, ("up", ".."))
+        br["items"], br["idx"] = items, 0
+        for i, (_, n) in enumerate(items):
+            if n == focus:
+                br["idx"] = i
+
+    def press_browser(self, b):
+        br = self.browser
+        items = br["items"]
+        if b == "B":
+            self.browser = None
+            return
+        if not items:
+            return
+        kind, name = items[br["idx"]]
+        if b == "up":
+            br["idx"] = (br["idx"] - 1) % len(items)
+        elif b == "down":
+            br["idx"] = (br["idx"] + 1) % len(items)
+        elif b in ("l2", "r2"):
+            br["idx"] = min(len(items) - 1, max(0, br["idx"] + (-8 if b == "l2" else 8)))
+        elif b == "A" and kind == "root":
+            br["dir"] = dict(self.roots())[name]
+            self.browser_list()
+        elif b == "A" and kind == "up":
+            label, rd = self.root_of(br["dir"])
+            if os.path.abspath(br["dir"]) == rd:
+                br["dir"] = None
+                self.browser_list(label)
+            else:
+                prev = os.path.basename(br["dir"])
+                br["dir"] = os.path.dirname(br["dir"])
+                self.browser_list(prev)
+        elif b == "A" and kind == "dir":
+            br["dir"] = os.path.join(br["dir"], name)
+            self.browser_list()
+        elif b in ("A", "X") and kind == "wav":
+            pad = self.eng.pads[self.sel]
+            try:
+                path = os.path.join(br["dir"], name)
+                if name.lower().endswith(CONVERT_EXTS):
+                    path = self.convert(path)
+                pad.load(path)
+                pad.start, pad.end = 0.0, 1.0
+                pad.bake()
+                self.eng.trigger(self.sel)
+                if b == "A":
+                    self.browser = None
+                    prune_cache(self.eng.pads)
+                    self.say("PAD %d: %s" % (self.sel + 1, pad.name))
+            except (OSError, ValueError) as e:
+                self.say("CAN'T LOAD: %s" % e, 3)
+
+    def convert(self, src):
+        """Turn an MP3 (or other compressed file) into a WAV in samples/converted, once, and return its path."""
+        folder = os.path.join(SAMPLES, "converted")
+        os.makedirs(folder, exist_ok=True)
+        out = os.path.join(folder, os.path.splitext(os.path.basename(src))[0] + ".wav")
+        if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(src) and os.path.getsize(out) > 1000:
+            return out
+        self.say("CONVERTING %s ..." % os.path.basename(src)[:36], 60)
+        self.draw()
+        tmp = out + ".part"
+        try:
+            r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-t", str(CONVERT_SECONDS), "-vn", "-ac", "2",
+                                "-ar", str(SR), "-c:a", "pcm_s16le", "-f", "wav", tmp],
+                               capture_output=True, timeout=120)
+        except FileNotFoundError:
+            raise ValueError("ffmpeg is not installed")
+        except subprocess.TimeoutExpired:
+            raise ValueError("converting took too long")
+        finally:
+            self.toast_until = 0
+        if r.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) < 1000:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise ValueError((r.stderr.decode("utf-8", "replace").strip().splitlines() or ["not an audio file"])[-1][-40:])
+        os.replace(tmp, out)
+        return out
+
+    # ------------------------------------------------------------ drawing
+    def S(self, v):
+        return int(round(v * self.u))
+
+    def R(self, x, y, w, h):
+        return pygame.Rect(int(self.ox + x * self.u), int(self.oy + y * self.u), self.S(w), self.S(h))
+
+    def box(self, x, y, w, h, fill=None, border=None, radius=3, bw=1):
+        r = self.R(x, y, w, h)
+        if fill is not None:
+            pygame.draw.rect(self.screen, fill, r, 0, self.S(radius))
+        if border is not None:
+            pygame.draw.rect(self.screen, border, r, max(1, self.S(bw)), self.S(radius))
+        return r
+
+    def text(self, s, x, y, font="m", color=TEXT, align="l"):
+        key = (s, font, color)
+        surf = self.cache.get(key)
+        if surf is None:
+            if len(self.cache) > 600:
+                self.cache.clear()
+            surf = self.cache[key] = self.fonts[font].render(s, True, color)
+        px, py = self.ox + x * self.u, self.oy + y * self.u
+        w, h = surf.get_size()
+        if align == "c":
+            px -= w / 2
+        elif align == "r":
+            px -= w
+        self.screen.blit(surf, (int(px), int(py - h / 2)))
+
+    def wave(self, pad, x, y, w, h, color, trim=False):
+        if pad.peaks is None:
+            self.box(x, y, w, h, DARK, LINE)
+            self.text("NO SAMPLE", x + w / 2, y + h / 2, "m", DIM, "c")
+            return
+        key = (id(pad.raw), x, y, w, h, trim, pad.start, pad.end)
+        rect = self.R(x, y, w, h)
+        if getattr(self, "_wave_key", None) == key:
+            self.screen.blit(self._wave_img, rect)
+            return
+        self.box(x, y, w, h, DARK, LINE)
+        self._draw_wave(pad, x, y, w, h, color, trim)
+        self._wave_key, self._wave_img = key, self.screen.subsurface(rect).copy()
+
+    def _draw_wave(self, pad, x, y, w, h, color, trim):
+        cols = len(pad.peaks)
+        mid = self.oy + (y + h / 2) * self.u
+        x0 = self.ox + (x + 2) * self.u
+        ww = (w - 4) * self.u
+        hh = (h / 2 - 3) * self.u
+        for i in range(cols):
+            f = i / cols
+            inside = (not trim) or (pad.start <= f < pad.end)
+            a = max(1, int(pad.peaks[i] * hh))
+            px = int(x0 + f * ww)
+            pygame.draw.line(self.screen, color if inside else LINE, (px, int(mid - a)), (px, int(mid + a)),
+                             max(1, int(ww / cols) + 1))
+        if trim:
+            for f, c in ((pad.start, TEAL), (pad.end, ORANGE)):
+                px = int(x0 + f * ww)
+                pygame.draw.line(self.screen, c, (px, int(self.oy + (y + 1) * self.u)),
+                                 (px, int(self.oy + (y + h - 1) * self.u)), max(2, self.S(1)))
+
+    def draw(self):
+        e = self.eng
+        self.screen.fill(BG)
+        # top bar
+        x = 6
+        for i, name in enumerate(PAGES):
+            on = i == self.page
+            self.box(x, 5, 50, 20, TEAL if on else PANEL, None if on else LINE)
+            self.text(name, x + 25, 15, "m", DARK if on else TEXT, "c")
+            x += 53
+        x += 6
+        blink = int(time.time() * 4) % 2
+        for i in range(NPAT):
+            on = i == e.cur_pat
+            pending = e.pending_pat == i
+            fill = ORANGE if on else (mix(PANEL, ORANGE, 0.5) if pending and blink else PANEL)
+            self.box(x, 5, 22, 20, fill, None if on else LINE)
+            self.text("ABCD"[i], x + 11, 15, "m", DARK if on else TEXT, "c")
+            x += 25
+        self.text("P%02d" % self.slot, 386, 15, "m", DIM)
+        self.text("%d" % round(e.bpm), 462, 15, "l", TEXT, "r")
+        self.text("BPM", 466, 16, "s", DIM)
+        if self.resampling:
+            self.text("RESAMP", 508, 16, "s", RED if blink else ORANGE)
+        elif e.rec:
+            pygame.draw.circle(self.screen, RED if (not e.playing or blink) else mix(RED, BG, 0.6),
+                               self.R(512, 15, 0, 0).topleft, self.S(6))
+            self.text("REC", 522, 16, "s", RED)
+        if e.playing:
+            cx, cy = self.R(560, 15, 0, 0).topleft
+            s = self.S(6)
+            pygame.draw.polygon(self.screen, TEAL, [(cx - s, cy - s), (cx - s, cy + s), (cx + s, cy)])
+        else:
+            self.box(554, 9, 12, 12, DIM, None, 1)
+        # output meter
+        self.box(578, 9, 56, 12, DARK, LINE, 2)
+        lv = min(1.0, e.peak)
+        if lv > 0.01:
+            self.box(580, 11, 52 * lv, 8, RED if lv > 0.95 else TEAL, None, 1)
+
+        getattr(self, "draw_" + PAGES[self.page].lower())()
+        if self.browser:
+            self.draw_browser()
+        if self.picker:
+            pk = self.picker
+            self.box(60, 34, 520, 296, PANEL, ORANGE, 6, 2)
+            self.text(pk["title"], 74, 50, "m", ORANGE)
+            top = max(0, min(pk["idx"] - 6, len(pk["items"]) - 12))
+            for n, (label, _) in enumerate(pk["items"][top:top + 12]):
+                y = 66 + n * 20
+                if top + n == pk["idx"]:
+                    self.box(68, y, 504, 19, mix(PANEL, TEAL, 0.35), None, 3)
+                self.text(label[:56], 78, y + 10, "m", TEXT)
+            self.text("A import to pads 1-16    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+        if self.live:
+            lv = self.live
+            pos = min(1.0, max(0.0, self.live_pos()))
+            self.box(20, 60, 600, 250, PANEL, ORANGE, 6, 2)
+            self.text("LIVE CHOP", 36, 80, "l", ORANGE)
+            self.text("%d of %d slice points" % (len(lv["marks"]), NPADS), 604, 81, "m", TEXT, "r")
+            self.box(36, 100, 568, 150, DARK, LINE, 4)
+            cols = len(lv["peaks"])
+            for i in range(cols):
+                f = i / cols
+                px = int(self.ox + (38 + f * 564) * self.u)
+                a = max(1, int(lv["peaks"][i] * 70 * self.u))
+                mid = int(self.oy + 175 * self.u)
+                pygame.draw.line(self.screen, TEAL if f <= pos else LINE, (px, mid - a), (px, mid + a), max(1, self.S(1.2)))
+            for k, m in enumerate(lv["marks"]):
+                self.box(38 + m * 564, 100, 1.5, 150, ORANGE, None, 0)
+                self.text(str(k + 1), 41 + m * 564, 108, "s", ORANGE)
+            self.box(38 + pos * 564, 100, 1.5, 150, TEXT, None, 0)
+            self.text("A  drop a slice point        B  finish        X  cancel", 320, 272, "m", TEXT, "c")
+            self.text("Each point starts a new pad. It finishes by itself at the end.", 320, 292, "s", DIM, "c")
+        if self.recording:
+            r = self.recording
+            left = max(0.0, REC_SECONDS - (time.time() - r["t0"]))
+            self.box(120, 110, 400, 130, PANEL, ORANGE, 6, 2)
+            self.text("RECORDING", 320, 134, "l", ORANGE, "c")
+            self.text("%.1f s left" % left, 320, 162, "m", TEXT, "c")
+            self.box(150, 180, 340, 8, DARK, LINE, 3)
+            self.box(150, 180, max(2, 340 * (1 - left / REC_SECONDS)), 8, ORANGE, None, 3)
+            self.box(150, 196, 340, 8, DARK, LINE, 3)
+            self.box(150, 196, max(2, 340 * min(1.0, r["level"] ** 0.5)), 8, TEAL, None, 3)
+            self.text("A stop early and use it", 320, 222, "s", DIM, "c")
+        if self.confirm:
+            self.box(150, 130, 340, 90, PANEL, ORANGE, 5, 2)
+            self.text(self.confirm[0], 320, 162, "m", TEXT, "c")
+            self.text("A = YES     B = NO", 320, 192, "m", ORANGE, "c")
+        if time.time() < self.toast_until:
+            self.box(120, 300, 400, 24, ORANGE, None, 4)
+            self.text(self.toast[:60], 320, 312, "m", DARK, "c")
+        pygame.display.flip()
+
+    def hints(self, s):
+        """Button help along the bottom, in readable type; wraps onto a second line when it has to."""
+        color = mix(DIM, TEXT, 0.6)
+        parts = [p.strip() for p in s.split("   ") if p.strip()]
+        limit = 624 * self.u
+        if self.fonts["h"].size("    ".join(parts))[0] <= limit or len(parts) < 2:
+            self.text("    ".join(parts), 320, 346, "h", color, "c")
+            return
+        best = min(range(1, len(parts)), key=lambda k: abs(len("  ".join(parts[:k])) - len("  ".join(parts[k:]))))
+        self.text("    ".join(parts[:best]), 320, 338, "h", color, "c")
+        self.text("    ".join(parts[best:]), 320, 353, "h", color, "c")
+
+    def draw_play(self):
+        e = self.eng
+        now = time.time()
+        drum = 0 if "l2" in self.held else (8 if "r2" in self.held else None)
+        for i, p in enumerate(e.pads):
+            r, c = divmod(i, 4)
+            x, y = 8 + c * 75, 34 + r * 75
+            glow = max(0.0, 1.0 - (now - e.pad_flash[i]) / 0.18)
+            base = PANEL if p.buf is not None else DARK
+            fill = mix(base, TEAL, glow)
+            self.box(x, y, 71, 71, fill, ORANGE if i == self.sel else LINE, 6, 2 if i == self.sel else 1)
+            col = DIM if (p.mute or p.buf is None) else TEXT
+            self.text(str(i + 1), x + 8, y + 16, "l", col)
+            self.text(p.name[:9], x + 36, y + 56, "s", col, "c")
+            if p.mute:
+                self.text("MUTE", x + 64, y + 13, "s", RED, "r")
+            if drum is not None and drum <= i < drum + 8:
+                k = DRUM_KEYS[i - drum]
+                self.box(x + 22, y + 22, 28, 22, ORANGE, None, 4)
+                self.text(DRUM_GLYPH.get(k, k), x + 36, y + 33, "m", DARK, "c")
+        p = e.pads[self.sel]
+        self.box(318, 34, 314, 296, PANEL, LINE, 6)
+        self.text("PAD %d" % (self.sel + 1), 330, 52, "l", ORANGE)
+        self.text(p.name[:22], 624, 53, "m", TEXT, "r")
+        self.wave(p, 330, 70, 290, 76, TEAL, trim=p.start > 0 or p.end < 1)
+        self.text("VOL %d" % round(p.vol * 100), 330, 162, "m", TEXT)
+        self.text("PITCH %+d" % p.pitch, 420, 162, "m", TEXT)
+        self.text("%.2fs" % p.seconds(), 620, 162, "m", DIM, "r")
+        if e.repeat_on:
+            self.box(330, 174, 118, 17, ORANGE, None, 3)
+            self.text("NOTE REPEAT %s" % RATES[e.repeat_div][0], 389, 183, "s", DARK, "c")
+        if p.choke:
+            self.text("CHOKE %d" % p.choke, 620, 183, "s", DIM, "r")
+        lines = ["A  play pad          B  mute pad",
+                 "X  record on/off     Y  sound + samples",
+                 "Hold L2: buttons play pads 1-8",
+                 "Hold R2: buttons play pads 9-16",
+                 "START  play/stop     L1 R1  page",
+                 "SELECT + L1 R1  pattern A-D",
+                 "SELECT + up down  tempo",
+                 "SELECT + X  note repeat on/off",
+                 "SELECT + left right  repeat rate"]
+        for i, s in enumerate(lines):
+            self.text(s, 330, 200 + i * 15, "h", mix(DIM, TEXT, 0.6))
+        self.hints("SELECT + START  quit (saves the project)")
+
+    def draw_beat(self):
+        e = self.eng
+        pat = e.patterns[e.cur_pat]
+        length = pat["length"]
+        self.cur_step = min(self.cur_step, length - 1)
+        view = (self.cur_step // 16) * 16
+        gx, gy, cw, rh = 96, 46, 33.5, 17.8
+        any_solo = any(p.solo for p in e.pads)
+        self.text("PATTERN %s   %d STEPS%s" % ("ABCD"[e.cur_pat], length,
+                  "   (%d-%d)" % (view + 1, view + 16) if length > 16 else ""), 8, 37, "s", DIM)
+        for s in range(16):
+            st = view + s
+            if st % 4 == 0:
+                self.text(str(st + 1), gx + s * cw + cw / 2, 37, "s", DIM, "c")
+        if e.playing and view <= e.step < view + 16:
+            self.box(gx + (e.step - view) * cw, gy - 1, cw - 2, rh * 16 + 1, mix(BG, TEAL, 0.22), None, 2)
+        for i, p in enumerate(e.pads):
+            y = gy + i * rh
+            silent = p.mute or (any_solo and not p.solo) or p.buf is None
+            if i == self.sel:
+                self.box(4, y, 88, rh - 2, PANEL, None, 2)
+            self.text("%02d %s" % (i + 1, p.name[:8]), 8, y + rh / 2 - 1, "s",
+                      ORANGE if i == self.sel else (DIM if silent else TEXT))
+            if p.solo:
+                self.text("S", 90, y + rh / 2 - 1, "s", TEAL, "r")
+            elif p.mute:
+                self.text("M", 90, y + rh / 2 - 1, "s", RED, "r")
+            for s in range(16):
+                st = view + s
+                v = pat["steps"][i][st]
+                x = gx + s * cw
+                if v:
+                    col = ORANGE if v == 2 else TEXT
+                    self.box(x + 2, y + 1, cw - 6, rh - 5, mix(col, BG, 0.6) if silent else col, None, 2)
+                else:
+                    self.box(x + 2, y + 1, cw - 6, rh - 5, PANEL if (st // 4) % 2 == 0 else mix(PANEL, BG, 0.5),
+                             None, 2)
+        self.box(gx + (self.cur_step - view) * cw, gy + self.sel * rh - 1, cw - 2, rh - 1, None, ORANGE, 3, 2)
+        self.hints("A step   Y accent   B mute   X solo   L2 R2 jump   SELECT+A clear track   SELECT+X clear all")
+
+    def draw_sound(self):
+        e = self.eng
+        p = e.pads[self.sel]
+        self.text("PAD %d" % (self.sel + 1), 10, 46, "l", ORANGE)
+        self.text(p.name[:30], 90, 47, "m", TEXT)
+        self.text("%.2fs" % p.seconds(), 630, 47, "m", DIM, "r")
+        self.wave(p, 8, 60, 624, 80, TEAL, trim=True)
+        if self.sound_row == 0:
+            self.box(7, 59, 626, 82, None, ORANGE, 4, 2)
+        t = self.auditioning()
+        if t is not None:
+            f = p.end - (p.end - p.start) * t if p.rev else p.start + (p.end - p.start) * t
+            self.box(10 + f * 620 - 0.75, 62, 1.5, 76, TEXT, None, 0)
+            self.text("PLAYING", 560, 47, "s", ORANGE, "r")
+        filt = "OFF" if not p.filt else ("LOW-PASS %d" % -p.filt if p.filt < 0 else "HIGH-PASS %d" % p.filt)
+        vals = {"VOLUME": "%d" % round(p.vol * 100), "PITCH": "%+d semitones" % p.pitch, "FILTER": filt,
+                "START": "%.1f%%" % (p.start * 100), "END": "%.1f%%" % (p.end * 100),
+                "DELAY": "send %d" % round(p.dsend * 100), "REVERB": "send %d" % round(p.rsend * 100),
+                "CHOKE": "group %d  (pads in a group cut each other)" % p.choke if p.choke else "OFF",
+                "FINE TUNE": "%+d cents" % p.fine,
+                "MODE": MODES[p.mode] + ("", "  (plays while held)", "  (hit to start, hit to stop)")[p.mode],
+                "REVERSE": "ON" if p.rev else "OFF",
+                "FADE IN": "%d ms" % p.fin if p.fin else "OFF", "FADE OUT": "%d ms" % p.fout if p.fout else "OFF",
+                "CHOP": "%s   -  A to chop onto pads" % self.CHOPS[self.chop_mode][0],
+                "FIT TO TEMPO": "%s at %d BPM   -  A to fit" % (FITS[self.fit_idx][0], round(e.bpm)),
+                "SPREAD": "this sound on all 16 pads, a semitone apart  -  A",
+                "SAMPLE": "%s   -  A to browse files" % (os.path.basename(p.path)[:34] or "(none)")}
+        fracs = {"VOLUME": p.vol / 1.5, "PITCH": (p.pitch + 24) / 48.0, "FILTER": (p.filt + 100) / 200.0,
+                 "FINE TUNE": (p.fine + 50) / 100.0, "START": p.start, "END": p.end, "DELAY": p.dsend,
+                 "REVERB": p.rsend, "FADE IN": p.fin / 2000.0, "FADE OUT": p.fout / 2000.0}
+        rows, shown = self.SOUND_ROWS[1:], 9
+        top = max(0, min(self.sound_row - 1 - 4, len(rows) - shown))
+        for n, name in enumerate(rows[top:top + shown]):
+            i = top + n + 1
+            y = 146 + n * 20.5
+            on = i == self.sound_row
+            self.box(8, y, 618, 19, PANEL if on else None, ORANGE if on else None, 4, 2)
+            self.text(name, 20, y + 10, "m", ORANGE if on else DIM)
+            self.text(vals[name][:52 if name not in fracs else 24], 130, y + 10, "m", TEXT)
+            if name in fracs:
+                self.box(350, y + 7, 264, 6, DARK, LINE, 3)
+                if name in ("FILTER", "FINE TUNE", "PITCH"):   # centre-zero bars
+                    lo, hi = sorted((0.5, fracs[name]))
+                    self.box(350 + 264 * lo, y + 7, max(2, 264 * (hi - lo)), 6, TEAL, None, 3)
+                else:
+                    self.box(350, y + 7, max(2, 264 * fracs[name]), 6, TEAL, None, 3)
+        self.box(630, 146, 3, shown * 20.5 - 2, DARK, None, 1)       # scroll position
+        self.box(630, 146 + (shown * 20.5 - 2) * top / len(rows), 3, (shown * 20.5 - 2) * shown / len(rows), DIM, None, 1)
+        if self.sound_row == 0:
+            self.hints("A or SELECT play / stop   left right move the start   down settings   X samples   L2 R2 pad   B back")
+        else:
+            self.hints("up down choose   left right or stick change   Y faster   SELECT play / stop   X samples   L2 R2 pad   B back")
+
+    def draw_fx(self):
+        e = self.eng
+        vals = {"DELAY TIME": DELAY_TIMES[e.delay_div][0], "DELAY FEEDBACK": "%d%%" % round(e.delay_fb * 100),
+                "REVERB SIZE": "%d%%" % round(e.reverb_size * 100), "STUTTER LENGTH": STUTTERS[e.stutter_div][0],
+                "REPEAT RATE": RATES[e.repeat_div][0]}
+        for i, name in enumerate(self.FX_ROWS):
+            y = 38 + i * 30
+            on = i == self.fx_row
+            self.box(8, y, 318, 26, PANEL if on else None, ORANGE if on else None, 4, 2)
+            self.text(name, 20, y + 13, "m", ORANGE if on else DIM)
+            self.text(vals[name], 316, y + 13, "m", TEXT, "r")
+        notes = ["Delay and reverb are shared.", "Each pad's send amount is set",
+                 "on the SOUND page.", "", "Note repeat is switched on from",
+                 "the PLAY page (SELECT + X)."]
+        for i, t in enumerate(notes):
+            self.text(t, 20, 204 + i * 18, "h", mix(DIM, TEXT, 0.6))
+        self.box(338, 34, 294, 296, PANEL, LINE, 6)
+        self.text("PERFORM", 350, 52, "l", ORANGE)
+        self.text("hold to apply", 622, 53, "s", DIM, "r")
+        spots = {"X": (420, 84), "Y": (346, 146), "A": (494, 146), "B": (420, 208)}
+        for btn, (x, y) in spots.items():
+            fx, label = self.PERFORM[btn]
+            on = e.perf[fx]
+            self.box(x, y, 130, 50, ORANGE if on else DARK, None if on else LINE, 8)
+            self.text(btn, x + 22, y + 25, "l", DARK if on else ORANGE, "c")
+            self.text(label, x + 82, y + 25, "s", DARK if on else TEXT, "c")
+        self.text("Works on the whole mix.", 485, 282, "h", mix(DIM, TEXT, 0.6), "c")
+        self.text("Let go and the sound snaps back.", 485, 300, "h", mix(DIM, TEXT, 0.6), "c")
+        self.hints("up down choose   left right change   hold A B X Y to perform")
+
+    def draw_proj(self):
+        e = self.eng
+        pat = e.patterns[e.cur_pat]
+        exists = os.path.exists(self.slot_path())
+        vals = {"PROJECT": "P%02d  %s" % (self.slot, "(saved)" if exists else "(empty)"),
+                "SAVE": "save to P%02d" % self.slot, "LOAD": "load P%02d" % self.slot,
+                "NEW": "starter kit and demo beat", "TEMPO": "%d BPM" % round(e.bpm),
+                "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
+                "LENGTH": "%d steps (pattern %s)" % (pat["length"], "ABCD"[e.cur_pat]),
+                "MASTER": "%d" % round(e.master * 100), "QUIT": "save and exit",
+                "RECORD MIC": "%d s from the mic, chopped onto pads" % REC_SECONDS,
+                "RESAMPLE": "record what you hear onto pad %d" % (self.sel + 1),
+                "IMPORT CHOPS": "slices from a GrainBrick project",
+                "GRAINBRICK": "open it to sample, quit to return"}
+        for i, name in enumerate(self.PROJ_ROWS):
+            y = 34 + i * 22.6
+            on = i == self.proj_row
+            self.box(8, y, 400, 21, PANEL if on else None, ORANGE if on else None, 4, 2)
+            self.text(name, 20, y + 10.5, "m", ORANGE if on else DIM)
+            self.text(vals[name], 150, y + 10.5, "m", TEXT)
+        self.box(418, 38, 214, 275, PANEL, LINE, 6)
+        self.text("PocketPads %s" % VERSION, 622, 326, "s", DIM, "r")
+        info = ["GETTING SOUNDS IN", "", "RECORD MIC is at the top of", "this list.", "",
+                "To load a file: SOUND page,", "SAMPLE row, press A.", "Put WAV or MP3 files in", "ports/pocketpads/samples/", "",
+                "audio: %s" % ("off" if e.dev is None else "ok"),
+                "dropouts: %d" % e.underruns, "peak load: %.1f ms" % e.max_render_ms]
+        for i, s in enumerate(info):
+            self.text(s, 430, 56 + i * 19, "h", TEXT if i == 0 else mix(DIM, TEXT, 0.6))
+        self.hints("up down choose   left right change   A confirm")
+
+    def draw_browser(self):
+        br = self.browser
+        self.box(60, 34, 520, 296, PANEL, ORANGE, 6, 2)
+        if br["dir"] is None:
+            where = "choose a folder"
+        else:
+            label, rd = self.root_of(br["dir"])
+            sub = os.path.relpath(br["dir"], rd)
+            where = label if sub == "." else "%s / %s" % (label, sub[-30:])
+        self.text("PAD %d SAMPLE   %s" % (self.sel + 1, where), 74, 50, "m", ORANGE)
+        items = br["items"]
+        if len([i for i in items if i[0] != "up"]) == 0:
+            self.text("No WAV or MP3 files here yet.", 320, 190, "m", DIM, "c")
+        rows = 12
+        top = max(0, min(br["idx"] - rows // 2, len(items) - rows))
+        for n, (kind, name) in enumerate(items[top:top + rows]):
+            y = 66 + n * 20
+            on = top + n == br["idx"]
+            if on:
+                self.box(68, y, 504, 19, mix(PANEL, TEAL, 0.35), None, 3)
+            label = name[:52] if kind == "wav" else "[ %s ]" % name[:48]
+            if kind == "root":
+                label = name
+            self.text(label, 78, y + 10, "m", TEXT if kind == "wav" else TEAL)
+            if kind == "wav" and not name.lower().endswith(".wav"):
+                self.text(os.path.splitext(name)[1][1:].upper(), 562, y + 10, "s", ORANGE, "r")
+        self.text("A choose    X preview    L2 R2 page    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+
+    # ------------------------------------------------------------ scripted testing
+    def load_script(self):
+        path = os.environ.get("PP_SCRIPT")
+        if not path:
+            return []
+        with open(path) as f:
+            return [ln.split() for ln in f if ln.strip() and not ln.startswith("#")]
+
+    def run_script(self):
+        while self.script and time.time() >= self.script_wait:
+            cmd = self.script.pop(0)
+            if cmd[0] == "press":
+                self.button(cmd[1], True)
+                self.button(cmd[1], False)
+            elif cmd[0] in ("down", "up"):
+                self.button(cmd[1], cmd[0] == "down")
+            elif cmd[0] == "wheel":
+                self.wheel = float(cmd[1])
+            elif cmd[0] == "wait":
+                self.script_wait = time.time() + float(cmd[1])
+            elif cmd[0] == "shot":
+                self.draw()
+                pygame.image.save(self.screen, cmd[1])
+            elif cmd[0] == "quit":
+                self.running = False
+
+    # ------------------------------------------------------------ main loop
+    def run(self):
+        clock = pygame.time.Clock()
+        while self.running:
+            for ev in pygame.event.get():
+                self.handle_event(ev)
+            self.tick_repeat()
+            self.tick_record()
+            self.tick_live()
+            self.tick_wheel(1 / 30.0)
+            if self.resampling and time.time() - self.resampling > 60:
+                self.finish_resample()
+            self.run_script()
+            self.draw()
+            clock.tick(30)
+        self.save_project(quiet=True)
+        self.print("exit: dropouts=%d peak_render=%.1fms" % (self.eng.underruns, self.eng.max_render_ms))
+        self.eng.shutdown()
+        pygame.quit()
+        return self.exit_code
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(App().run())
+    except Exception:
+        with open(os.path.join(APP_DIR, "pocketpads_crash.log"), "w") as f:
+            traceback.print_exc(file=f)
+        traceback.print_exc()
+        sys.exit(1)

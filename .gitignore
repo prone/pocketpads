@@ -1,0 +1,12 @@
+# third-party downloads and local environment (not ours to redistribute)
+download/
+knulli/
+.venv/
+.DS_Store
+__pycache__/
+# PocketPads runtime data
+pocketpads/projects/
+pocketpads/samples/
+pocketpads/state.json
+pocketpads/*.log
+pocketpads/_vendor/
