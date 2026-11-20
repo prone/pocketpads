@@ -76,4 +76,24 @@ print("everything-on render %.3f ms per block (budget %.1f)" % ((time.perf_count
 e.pads[2].filt = -40; e.pads[2].choke = 2; e.swing = 58; e.delay_div = 3; f = os.path.join(d, "p.json"); e.save(f)
 e2 = Engine(); e2.load(f); assert (e2.pads[2].filt, e2.pads[2].choke, e2.swing, e2.delay_div, round(e2.pads[2].dsend,2)) == (-40, 2, 58, 3, 0.3)
 old = e.to_dict(); old["swing"] = 0.4; e2.from_dict(old); assert e2.swing == 60
+# --- lo-fi and compressor
+import numpy as _np, engine as _e, tempfile as _tf, os as _os
+_d = _tf.mkdtemp(); _t = _np.arange(_e.SR) / _e.SR
+_e.write_wav(_os.path.join(_d, "t.wav"), 0.6 * _np.sin(2 * _np.pi * 330 * _t))
+lp = _e.Pad(0); lp.load(_os.path.join(_d, "t.wav")); clean = lp.buf.copy()
+lp.crush = 5; lp.bake(); levels = len(_np.unique(_np.round(lp.buf[2000:20000, 0], 5)))
+print("4-bit crush: %d distinct levels" % levels); assert levels <= 16
+lp.crush, lp.down = 0, 4; lp.bake()
+held = _np.mean(_np.diff(lp.buf[2000:20000, 0]) == 0)
+print("rate /16: %.0f%% of samples repeat the one before" % (held * 100)); assert held > 0.9 and len(lp.buf) == len(clean)
+def loud(comp):
+    g = _e.Engine(); g.comp = comp; g.pads[0].load(_os.path.join(_d, "t.wav")); g.pads[0].vol = 1.5
+    g.pads[1].load(_os.path.join(_d, "t.wav")); g.pads[1].vol = 0.1
+    g.trigger(0); a = _np.concatenate([g.render(_e.BLOCK) for _ in range(40)])
+    h = _e.Engine(); h.comp = comp; h.pads[1].load(_os.path.join(_d, "t.wav")); h.pads[1].vol = 0.1
+    h.trigger(1); b = _np.concatenate([h.render(_e.BLOCK) for _ in range(40)])
+    return float(_np.abs(a[8000:]).max()), float(_np.abs(b[8000:]).max())
+(l0, q0), (l1, q1) = loud(0.0), loud(1.0)
+print("compressor: loud %.2f -> %.2f, quiet %.3f -> %.3f (range %.1fx -> %.1fx)" % (l0, l1, q0, q1, l0 / q0, l1 / q1))
+assert q1 > q0 * 1.8 and l1 / q1 < 0.6 * l0 / q0 and l1 <= 1.0
 print("ALL FX OK")

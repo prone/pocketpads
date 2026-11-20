@@ -16,7 +16,7 @@ import numpy as np
 import pygame
 
 import kit
-from engine import (APP_DIR, CHOKE_GROUPS, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NPADS, NPAT,
+from engine import (APP_DIR, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
@@ -639,7 +639,7 @@ class App:
         else:
             self.hints("up down choose   left right change   A confirm   SELECT+L1 R1 pattern")
 
-    SOUND_ROWS = ["WAVEFORM", "SAMPLE", "VOLUME", "PITCH", "FINE TUNE", "STRETCH", "FILTER", "START", "END", "MODE", "REVERSE", "FADE IN",
+    SOUND_ROWS = ["WAVEFORM", "SAMPLE", "VOLUME", "PITCH", "FINE TUNE", "STRETCH", "FILTER", "BIT CRUSH", "LO-FI RATE", "START", "END", "MODE", "REVERSE", "FADE IN",
                   "FADE OUT", "DELAY", "REVERB", "CHOKE", "CHOP", "FIT STYLE", "FIT TO TEMPO", "SPREAD"]
     CHOPS = [("AT HITS", 0), ("4 EQUAL", 4), ("8 EQUAL", 8), ("16 EQUAL", 16), ("LIVE: TAP AS IT PLAYS", -1)]
 
@@ -687,6 +687,12 @@ class App:
                 self.say("TOO LONG TO STRETCH (%d s MAX) - TRIM OR CHOP IT" % STRETCH_MAX_SECONDS, 3.5)
             elif row == "STRETCH":
                 p.stretch = float(min(STRETCH_MAX, max(STRETCH_MIN, round(p.stretch) + d)))
+                self.rebake(p)
+            elif row == "BIT CRUSH":
+                p.crush = int(min(len(CRUSH_BITS) - 1, max(0, p.crush + (1 if d > 0 else -1))))
+                self.rebake(p)
+            elif row == "LO-FI RATE":
+                p.down = int(min(len(CRUSH_RATES) - 1, max(0, p.down + (1 if d > 0 else -1))))
                 self.rebake(p)
             elif row == "FIT STYLE":
                 self.fit_keep = not self.fit_keep
@@ -900,7 +906,7 @@ class App:
             t %= 1.0
         return max(0.0, t)
 
-    FX_ROWS = ["DELAY TIME", "DELAY FEEDBACK", "REVERB SIZE", "STUTTER LENGTH", "REPEAT RATE"]
+    FX_ROWS = ["COMPRESSOR", "DELAY TIME", "DELAY FEEDBACK", "REVERB SIZE", "STUTTER LENGTH", "REPEAT RATE"]
     PERFORM = {"A": ("stutter", "STUTTER"), "B": ("tape", "TAPE STOP"), "X": ("lp", "LOW-PASS"), "Y": ("hp", "HIGH-PASS")}
 
     def press_fx(self, b, sel):
@@ -916,7 +922,9 @@ class App:
         elif b in ("left", "right"):
             d = 1 if b == "right" else -1
             row = self.FX_ROWS[self.fx_row]
-            if row == "DELAY TIME":
+            if row == "COMPRESSOR":
+                e.comp = round(min(1.0, max(0.0, e.comp + 0.05 * d)), 2)
+            elif row == "DELAY TIME":
                 e.delay_div = (e.delay_div + d) % len(DELAY_TIMES)
             elif row == "DELAY FEEDBACK":
                 e.delay_fb = round(min(0.9, max(0.0, e.delay_fb + 0.05 * d)), 2)
@@ -1583,6 +1591,8 @@ class App:
                 "DELAY": "send %d" % round(p.dsend * 100), "REVERB": "send %d" % round(p.rsend * 100),
                 "CHOKE": "group %d  (pads in a group cut each other)" % p.choke if p.choke else "OFF",
                 "FINE TUNE": "%+d cents" % p.fine,
+                "BIT CRUSH": "%d bit" % CRUSH_BITS[p.crush] if p.crush else "OFF",
+                "LO-FI RATE": "%.1f kHz" % (SR / 1000.0 / CRUSH_RATES[p.down]) if p.down else "OFF",
                 "STRETCH": "OFF" if abs(p.stretch - 100) < 0.05 else "%.4g%% length, same pitch" % round(p.stretch, 1),
                 "FIT STYLE": "KEEP PITCH (stretch)" if self.fit_keep else "CHANGE PITCH (classic)",
                 "MODE": MODES[p.mode] + ("", "  (plays while held)", "  (hit to start, hit to stop)")[p.mode],
@@ -1593,7 +1603,8 @@ class App:
                 "SPREAD": "this sound on all 16 pads, a semitone apart  -  A",
                 "SAMPLE": "%s   -  A to browse files" % (os.path.basename(p.path)[:34] or "(none)")}
         fracs = {"VOLUME": p.vol / 1.5, "PITCH": (p.pitch + 24) / 48.0, "FILTER": (p.filt + 100) / 200.0,
-                 "FINE TUNE": (p.fine + 50) / 100.0,
+                 "FINE TUNE": (p.fine + 50) / 100.0, "BIT CRUSH": p.crush / (len(CRUSH_BITS) - 1.0),
+                 "LO-FI RATE": p.down / (len(CRUSH_RATES) - 1.0),
                  "STRETCH": (p.stretch - STRETCH_MIN) / (STRETCH_MAX - STRETCH_MIN), "START": p.start, "END": p.end, "DELAY": p.dsend,
                  "REVERB": p.rsend, "FADE IN": p.fin / 2000.0, "FADE OUT": p.fout / 2000.0}
         rows, shown = self.SOUND_ROWS[1:], 9
@@ -1621,20 +1632,20 @@ class App:
 
     def draw_fx(self):
         e = self.eng
-        vals = {"DELAY TIME": DELAY_TIMES[e.delay_div][0], "DELAY FEEDBACK": "%d%%" % round(e.delay_fb * 100),
+        vals = {"COMPRESSOR": "%d%%" % round(e.comp * 100) if e.comp else "OFF", "DELAY TIME": DELAY_TIMES[e.delay_div][0], "DELAY FEEDBACK": "%d%%" % round(e.delay_fb * 100),
                 "REVERB SIZE": "%d%%" % round(e.reverb_size * 100), "STUTTER LENGTH": STUTTERS[e.stutter_div][0],
                 "REPEAT RATE": RATES[e.repeat_div][0]}
         for i, name in enumerate(self.FX_ROWS):
-            y = 38 + i * 30
+            y = 36 + i * 28
             on = i == self.fx_row
             self.box(8, y, 318, 26, PANEL if on else None, ORANGE if on else None, 4, 2)
             self.text(name, 20, y + 13, "m", ORANGE if on else DIM)
             self.text(vals[name], 316, y + 13, "m", TEXT, "r")
-        notes = ["Delay and reverb are shared.", "Each pad's send amount is set",
-                 "on the SOUND page.", "", "Note repeat is switched on from",
-                 "the PLAY page (SELECT + X)."]
+        notes = ["The compressor glues the whole mix.", "Delay and reverb are shared: each pad's",
+                 "send is set on the SOUND page.", "Note repeat: PLAY page, SELECT + X.",
+                 "Bit crush and lo-fi rate: SOUND page."]
         for i, t in enumerate(notes):
-            self.text(t, 20, 204 + i * 18, "h", mix(DIM, TEXT, 0.6))
+            self.text(t, 20, 218 + i * 18, "h", mix(DIM, TEXT, 0.6))
         self.box(338, 34, 294, 296, PANEL, LINE, 6)
         self.text("PERFORM", 350, 52, "l", ORANGE)
         self.text("hold to apply", 622, 53, "s", DIM, "r")

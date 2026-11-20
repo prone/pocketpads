@@ -56,6 +56,10 @@ RATES = [("1/4", 4.0), ("1/8", 2.0), ("1/8T", 4 / 3), ("1/16", 1.0), ("1/16T", 2
 DELAY_TIMES = [("1/16", 1.0), ("1/8", 2.0), ("1/8 DOT", 3.0), ("1/4", 4.0)]
 STUTTERS = [("1/8", 2.0), ("1/16", 1.0), ("1/32", 0.5)]
 CHOKE_GROUPS = 4
+# Lo-fi, per pad: fewer bits adds grit and noise, a lower sample rate adds the dull, ringing top of old samplers.
+CRUSH_BITS = [0, 12, 10, 8, 6, 4]            # 0 = off
+CRUSH_RATES = [1, 2, 4, 8, 16]               # divide the sample rate by this (1 = off)
+COMP_RATIO = 4.0
 ONESHOT, HOLD, LOOP = 0, 1, 2
 MODES = ["ONE-SHOT", "HOLD", "LOOP"]
 FITS = [("1 BEAT", 1), ("2 BEATS", 2), ("1 BAR", 4), ("2 BARS", 8), ("4 BARS", 16)]
@@ -432,10 +436,11 @@ class Pad:
         self.filt, self.dsend, self.rsend, self.choke = 0, 0.0, 0.0, 0
         self.fine, self.mode, self.rev, self.fin, self.fout = 0, 0, False, 0, 0
         self.stretch = 100.0             # length in percent, pitch unchanged
+        self.crush, self.down = 0, 0     # lo-fi: indexes into CRUSH_BITS and CRUSH_RATES
         self.mute = self.solo = False
 
     def copy_settings(self, other):
-        for k in ("vol", "pitch", "fine", "start", "end", "filt", "dsend", "rsend", "choke", "mode", "rev", "fin", "fout", "stretch"):
+        for k in ("vol", "pitch", "fine", "start", "end", "filt", "dsend", "rsend", "choke", "mode", "rev", "fin", "fout", "stretch", "crush", "down"):
             setattr(self, k, getattr(other, k))
 
     def region_seconds(self):
@@ -468,6 +473,14 @@ class Pad:
         if self.pitch or self.fine:
             seg = resample(seg, ratio)
         seg = fft_filter(seg, self.filt / 100.0) if self.filt else seg.copy()
+        k = CRUSH_RATES[self.down]
+        if k > 1:                        # hold every k-th sample: the stepped, aliased sound of a low sample rate
+            seg = np.repeat(seg[::k], k, axis=0)[:len(seg)]
+        bits = CRUSH_BITS[self.crush]
+        if bits:
+            q = float(2 ** (bits - 1))
+            seg = np.round(seg * q) / q
+            seg = seg.astype(np.float32)
         fi = min(max(44, int(self.fin * SR / 1000)), len(seg) // 2)
         fo = min(max(220, int(self.fout * SR / 1000)), len(seg) // 2)
         seg[:fi] *= np.linspace(0, 1, fi, dtype=np.float32)[:, None]
@@ -513,6 +526,7 @@ class Engine:
         self.cur_pat, self.pending_pat = 0, None
         self.song, self.song_on, self.song_pos = [], False, 0     # chain of pattern numbers; next slot to play
         self.bpm, self.swing, self.master = 120.0, 50.0, 0.8
+        self.comp, self._comp_gain = 0.0, 1.0      # master compressor amount 0..1, and its current gain
         self.delay_div, self.delay_fb, self.reverb_size = 1, 0.45, 0.4
         self.repeat_on, self.repeat_div, self.stutter_div = False, 3, 1
         self.delay, self.reverb = Delay(), Reverb()
@@ -812,6 +826,18 @@ class Engine:
             out += wet
         out *= self.master * HEADROOM
         self._perform(out, n)
+        if self.comp > 0.0 or self._comp_gain < 0.999:
+            # Master compressor. The level is measured once per block and the gain glides to it, which lets
+            # the front of each drum hit through (punch) and then pulls the body together (glue).
+            amount = self.comp
+            thresh = 0.5 - 0.42 * amount
+            pk = float(np.abs(out).max())
+            target = (thresh + (pk - thresh) / COMP_RATIO) / pk if (amount > 0.0 and pk > thresh) else 1.0
+            g0 = self._comp_gain
+            g1 = target if target < g0 else g0 + (target - g0) * 0.08       # fast down, about 150 ms back up
+            out *= np.linspace(g0, g1, n, dtype=np.float32)[:, None]
+            out *= 1.0 + 1.3 * amount                                         # make up the lost level
+            self._comp_gain = g1
         # Headroom keeps overlapping sounds clean; only real peaks get rounded off.
         mag = np.abs(out)
         over = mag > KNEE
@@ -984,7 +1010,7 @@ class Engine:
         return {
             "version": 3, "bpm": self.bpm, "swing": self.swing, "master": self.master,
             "delay_div": self.delay_div, "delay_fb": self.delay_fb, "reverb_size": self.reverb_size,
-            "repeat_div": self.repeat_div, "stutter_div": self.stutter_div,
+            "repeat_div": self.repeat_div, "stutter_div": self.stutter_div, "comp": self.comp,
             "pattern": self.cur_pat,
             "patterns": [{"length": p["length"], "steps": [r[:p["length"]] for r in p["steps"]],
                           "notes": [r[:p["length"]] for r in p["notes"]]} for p in self.patterns],
@@ -992,7 +1018,7 @@ class Engine:
             "pads": [{"path": _rel(p.path) if p.path else "", "vol": p.vol, "pitch": p.pitch,
                       "start": p.start, "end": p.end, "mute": p.mute, "name": p.name,
                       "filt": p.filt, "dsend": p.dsend, "rsend": p.rsend, "choke": p.choke,
-                      "fine": p.fine, "stretch": p.stretch, "mode": p.mode, "rev": p.rev, "fin": p.fin, "fout": p.fout}
+                      "fine": p.fine, "stretch": p.stretch, "crush": p.crush, "down": p.down, "mode": p.mode, "rev": p.rev, "fin": p.fin, "fout": p.fout}
                      for p in self.pads],
         }
 
@@ -1011,6 +1037,7 @@ class Engine:
         self.stutter_div = int(d.get("stutter_div", 1)) % len(STUTTERS)
         self.cmds.append(("relall",))      # the audio thread owns self.holds
         self.master = float(min(1.5, max(0, d.get("master", 0.8))))
+        self.comp = float(min(1.0, max(0.0, d.get("comp", 0.0))))
         self.cur_pat = int(d.get("pattern", 0)) % NPAT
         self.pending_pat = None
         for i in range(NPAT):
@@ -1044,6 +1071,8 @@ class Engine:
             p.choke = int(s.get("choke", 0)) % (CHOKE_GROUPS + 1)
             p.fine = int(min(50, max(-50, s.get("fine", 0))))
             p.stretch = float(min(STRETCH_MAX, max(STRETCH_MIN, s.get("stretch", 100.0))))
+            p.crush = int(s.get("crush", 0)) % len(CRUSH_BITS)
+            p.down = int(s.get("down", 0)) % len(CRUSH_RATES)
             p.mode = int(s.get("mode", 0)) % len(MODES)
             p.rev = bool(s.get("rev", False))
             p.fin = int(min(2000, max(0, s.get("fin", 0))))
