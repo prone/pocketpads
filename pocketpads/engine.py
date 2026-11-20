@@ -1,4 +1,26 @@
-"""PocketPads audio engine: sample pads, step sequencer, SDL audio output."""
+"""PocketPads audio engine: sample pads, step sequencer, effects, SDL audio output.
+
+How it fits together
+--------------------
+* A Pad "bakes" its sample: trim, reverse, pitch, filter and fades are applied once, when a setting
+  changes, into a ready-to-play buffer. Playing a pad is then just adding slices of that buffer.
+* Engine.render(n) produces n stereo frames: it starts voices for sequencer steps and note repeats at
+  their exact sample positions, mixes the voices, runs the shared delay and reverb, then the whole-mix
+  performance effects and a soft limiter.
+* A background thread (Engine._run) calls render() and queues the result to SDL2 through ctypes.
+
+Threads
+-------
+The UI thread and the audio thread share this object. The rules that keep that safe:
+* The UI may assign simple settings directly (pad.vol, engine.bpm, pattern steps, a new pad.buf).
+  Each is a single reference swap, and a voice keeps its own reference to the buffer it started with.
+* Anything that changes the audio thread's own state (voices, held repeats, transport) goes through
+  the `cmds` queue: use trigger(), hold(), release(), note_off(), play(), stop(), preview().
+* bake() never modifies a buffer in place; it builds a new one and swaps it in.
+
+Units: pitch in semitones, fine in cents, filt -100..100 (negative low-pass, positive high-pass),
+fin/fout (fade in/out) in milliseconds, start/end as fractions of the file, sends 0..1.
+"""
 import ctypes
 import glob
 import json
@@ -7,6 +29,7 @@ import re
 import struct
 import threading
 import time
+import traceback
 from collections import deque
 
 import numpy as np
@@ -32,6 +55,8 @@ ONESHOT, HOLD, LOOP = 0, 1, 2
 MODES = ["ONE-SHOT", "HOLD", "LOOP"]
 FITS = [("1 BEAT", 1), ("2 BEATS", 2), ("1 BAR", 4), ("2 BARS", 8), ("4 BARS", 16)]
 MAX_CAPTURE_BLOCKS = 60 * 44100 // 512      # resampling stops collecting after a minute
+MAX_WAV_BYTES = 256 * 1024 * 1024    # largest file load_wav will read
+MAX_BAKE_SECONDS = 240               # longest playable buffer a pad may hold (pitching down stretches it)
 HSIZE = 1 << 17          # master history for stutter / tape stop (about 3 s)
 TAPS = 127               # master filter length
 _HAM = np.hamming(TAPS)
@@ -50,7 +75,7 @@ def fft_filter(seg, amount):
     if abs(amount) < 0.01:
         return seg
     n = len(seg)
-    size = 1 << max(8, (n - 1).bit_length())
+    size = 1 << max(8, (n + 4096 - 1).bit_length())      # room for the filter to ring out instead of wrapping round
     f = np.fft.rfftfreq(size, 1.0 / SR)
     if amount < 0:
         fc = 18000.0 * (120.0 / 18000.0) ** (-amount)
@@ -155,18 +180,23 @@ def resample(a, ratio):
     """Linear resample of an (n, 2) float array; ratio > 1 shortens it."""
     n = len(a)
     n_out = max(2, int(n / ratio))
-    x = np.arange(n_out, dtype=np.float64) * ratio
-    src = np.arange(n, dtype=np.float64)
     out = np.empty((n_out, a.shape[1]), np.float32)
-    for c in range(a.shape[1]):
-        out[:, c] = np.interp(x, src, a[:, c])
+    step = 1 << 18                       # work in pieces so a long sample never needs huge temporaries
+    for lo in range(0, n_out, step):
+        pos = np.arange(lo, min(n_out, lo + step), dtype=np.float64) * ratio
+        i0 = np.minimum(pos.astype(np.int64), n - 1)
+        i1 = np.minimum(i0 + 1, n - 1)
+        frac = (pos - i0).astype(np.float32)[:, None]
+        out[lo:lo + len(pos)] = a[i0] + (a[i1] - a[i0]) * frac
     return out
 
 
 def load_wav(path, max_seconds=180):
     """Read a PCM or float WAV into an (n, 2) float32 array at SR."""
+    if not os.path.isfile(path):         # never block on a device node or pipe named in a project file
+        raise ValueError("not a file")
     with open(path, "rb") as f:
-        data = f.read()
+        data = f.read(MAX_WAV_BYTES)
     if data[:4] != b"RIFF" or data[8:12] != b"WAVE":
         raise ValueError("not a WAV file")
     pos, fmt, pcm = 12, None, None
@@ -216,12 +246,14 @@ def load_wav(path, max_seconds=180):
         raise ValueError("WAV is empty")
     if rate != SR:
         a = resample(a, rate / SR)
+    # A float WAV can carry NaN or infinity, which would ring round the delay and reverb for ever.
+    a = np.clip(np.nan_to_num(a, nan=0.0, posinf=1.0, neginf=-1.0), -8.0, 8.0)
     return np.ascontiguousarray(a, np.float32)
 
 
 def write_wav(path, audio):
     """Write 16-bit PCM; a 1-D array is mono, an (n, 2) array is stereo."""
-    ch = 2 if getattr(audio, "ndim", 1) == 2 else 1
+    ch = audio.shape[1] if getattr(audio, "ndim", 1) == 2 else 1
     pcm = (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
     with open(path, "wb") as f:
         f.write(b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt ")
@@ -248,7 +280,10 @@ def find_chops(raw, count=16):
     floor = max(peak * 0.02, float(np.percentile(env, 20)) * 2.0)
     loud = np.nonzero(env > floor)[0]
     first, last = (int(loud[0]), int(loud[-1]) + 1) if len(loud) else (0, frames)   # trim quiet ends
-    before = np.array([env[max(0, i - 8):i].mean() if i else 0.0 for i in range(frames)])
+    csum = np.concatenate(([0.0], np.cumsum(env, dtype=np.float64)))
+    idx = np.arange(frames)
+    lo = np.maximum(0, idx - 8)
+    before = (csum[idx] - csum[lo]) / np.maximum(1, idx - lo)      # mean level of the 40 ms before each frame
     rise = env / (before + floor)
     gap = 16                                          # hits at least 80 ms apart
     hits = []
@@ -320,7 +355,7 @@ class Pad:
         self.raw, self.peaks = load_cached(path)
         self.path = path
         name = os.path.splitext(os.path.basename(path))[0].upper()
-        self.name = re.sub(r"^\d+[ _-]+", "", name) or name
+        self.name = re.sub(r"^\d{1,2}[ _-]+", "", name) or name     # drop "01 " style numbering, keep "808 KICK"
         self.bake()
 
     def bake(self):
@@ -329,13 +364,15 @@ class Pad:
             self.buf = None
             return
         n = len(self.raw)
-        a = min(int(self.start * n), n - 16)
+        a = max(0, min(int(self.start * n), n - 16))
         b = max(a + 16, int(self.end * n))
         seg = self.raw[a:b]
         if self.rev:
             seg = seg[::-1]
+        ratio = 2.0 ** ((self.pitch + self.fine / 100.0) / 12.0)
+        seg = seg[:int(MAX_BAKE_SECONDS * SR * ratio)]
         if self.pitch or self.fine:
-            seg = resample(seg, 2.0 ** ((self.pitch + self.fine / 100.0) / 12.0))
+            seg = resample(seg, ratio)
         seg = fft_filter(seg, self.filt / 100.0) if self.filt else seg.copy()
         fi = min(max(44, int(self.fin * SR / 1000)), len(seg) // 2)
         fo = min(max(220, int(self.fout * SR / 1000)), len(seg) // 2)
@@ -393,6 +430,7 @@ class Engine:
         self.sdl = self.dev = None
         self.queue_blocks = 3
         self.underruns = 0
+        self.render_errors, self.last_error = 0, ""
         self.max_render_ms = 0.0
         self.audio_error = ""
 
@@ -417,7 +455,8 @@ class Engine:
 
     def preview(self, pad, buf):
         """Play an arbitrary buffer through a pad's channel, e.g. a whole file while chopping live."""
-        self.cmds.append(("raw", pad, buf))
+        if getattr(buf, "ndim", 0) == 2 and buf.shape[1] == 2:
+            self.cmds.append(("raw", pad, buf))
 
     def capture_start(self):
         self.cap = []
@@ -454,7 +493,7 @@ class Engine:
         return SR * 60.0 / self.bpm / 4.0
 
     # ----- rendering (audio thread)
-    def _start_voice(self, pad, vel, off, gate=None, buf=None):
+    def _start_voice(self, pad, vel, off, gate=None, buf=None, manual=False):
         p = self.pads[pad]
         if buf is None:
             buf = p.buf
@@ -466,13 +505,19 @@ class Engine:
             if not v[5] and (v[3] == pad or (group and self.pads[v[3]].choke == group)):
                 was_looping = was_looping or (v[3] == pad and v[9])
                 v[5], v[6] = True, off
-        if p.mode == LOOP and was_looping and buf is p.buf:
-            return                      # a looping pad is a switch: the second hit turns it off
+        if manual and p.mode == LOOP and was_looping and buf is p.buf:
+            return                      # played by hand, a looping pad is a switch: the second hit turns it off
         if p.mode != HOLD:
             gate = None
-        # buf, pos, gain, pad, offset, fading, fade offset, delay send, reverb send, loop, gate frames
+        # A voice is a plain list for speed. Fields, by index:
+        #   0 buf         the pad's baked audio            6 fade offset  where in the block the fade starts
+        #   1 pos         next sample to play              7 delay send
+        #   2 gain                                         8 reverb send
+        #   3 pad         index of the owning pad          9 loop         wrap round at the end
+        #   4 offset      start position inside the block 10 gate         frames left before a HOLD pad fades
+        #   5 fading      being faded out                 11 fade done    samples of the fade already played
         self.voices.append([buf, 0, p.vol * vel, pad, off, False, 0, p.dsend, p.rsend,
-                            p.mode == LOOP and buf is p.buf, gate])
+                            p.mode == LOOP and buf is p.buf, gate, 0])
         if len(self.voices) > MAX_VOICES:
             self.voices.pop(0)
 
@@ -481,7 +526,9 @@ class Engine:
         while self.cmds:
             c = self.cmds.popleft()
             if c[0] == "trig":
-                self._start_voice(c[1], c[2], 0)
+                self._start_voice(c[1], c[2], 0, manual=True)
+            elif c[0] == "relall":
+                self.holds.clear()
             elif c[0] == "off":
                 for v in self.voices:
                     if v[3] == c[1] and not v[5]:
@@ -566,7 +613,7 @@ class Engine:
         alive = []
         queue = list(self.voices)
         for v in queue:
-            buf, pos, gain, _, off, fade, foff, ds, rs, loop, gate = v
+            buf, pos, gain, _, off, fade, foff, ds, rs, loop, gate, done = v
             take = min(n - off, len(buf) - pos)
             if take <= 0:
                 continue
@@ -576,19 +623,24 @@ class Engine:
                 else:
                     v[10] = gate - (n - off)
             if fade:
-                pre = max(0, min(take, foff - off))
-                m = min(take - pre, FADE)
-                chunk = buf[pos:pos + pre + max(m, 0)] * gain
+                # Play up to the fade point, then as much of the ramp as fits; a fade that reaches the end
+                # of the block carries on in the next one instead of being cut short (which clicks).
+                pre = 0 if done else max(0, min(take, foff - off))
+                m = max(0, min(take - pre, FADE - done))
+                chunk = buf[pos:pos + pre + m] * gain
                 if m > 0:
-                    chunk[pre:] *= _RAMP[:m, None]
+                    chunk[pre:] *= _RAMP[done:done + m, None]
                 take = len(chunk)
+                if done + m < FADE and pos + take < len(buf):
+                    v[1], v[4], v[5], v[6], v[11] = pos + take, 0, True, 0, done + m
+                    alive.append(v)
             else:
                 chunk = buf[pos:pos + take] * gain
                 v[1], v[4] = pos + take, 0
                 if v[1] < len(buf):
                     alive.append(v)
                 elif loop and off + take < n and len(buf) > 64:
-                    queue.append([buf, 0, gain, v[3], off + take, False, 0, ds, rs, True, None])
+                    queue.append([buf, 0, gain, v[3], off + take, False, 0, ds, rs, True, None, 0])
                 elif loop and len(buf) > 64:
                     v[1] = 0
                     alive.append(v)
@@ -617,8 +669,9 @@ class Engine:
         if over.any():
             out[over] = np.sign(out[over]) * (KNEE + (1 - KNEE) * np.tanh((mag[over] - KNEE) / (1 - KNEE)))
         self.peak = max(float(mag.max()), self.peak * 0.9)
-        if self.cap is not None and len(self.cap) < MAX_CAPTURE_BLOCKS:
-            self.cap.append(out.copy())
+        cap = self.cap                  # read once: the UI thread may set it to None at any moment
+        if cap is not None and len(cap) < MAX_CAPTURE_BLOCKS:
+            cap.append(out.copy())
         self._clock += n
         return out
 
@@ -631,7 +684,7 @@ class Engine:
         if pf["stutter"]:
             if self._st_loop is None:
                 length = int(max(256, min(HSIZE // 2, self.step_frames() * STUTTERS[self.stutter_div][1])))
-                loop = self.hist[(self.hw + n - length + _ar(length)) & mask].copy()
+                loop = self.hist[(self.hw + n - length + np.arange(length)) & mask].copy()
                 f = min(64, length // 4)
                 loop[:f] *= np.linspace(0, 1, f, dtype=np.float32)[:, None]
                 loop[-f:] *= np.linspace(1, 0, f, dtype=np.float32)[:, None]
@@ -691,7 +744,8 @@ class Engine:
             except Exception as e:  # keep running silently so the UI still works
                 self.audio_error = str(e)
                 self.sdl = self.dev = None
-        threading.Thread(target=self._run, daemon=True).start()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
 
     def _open_device(self):
         cands = []
@@ -753,7 +807,14 @@ class Engine:
                 if queued == 0 and started:
                     self.underruns += 1
                 t0 = time.perf_counter()
-                pcm = self.render_pcm(BLOCK)
+                try:
+                    pcm = self.render_pcm(BLOCK)
+                except Exception:           # one bad block must not silence the app for good
+                    self.render_errors += 1
+                    if self.render_errors == 1:
+                        self.last_error = traceback.format_exc()
+                    self.voices = []
+                    pcm = np.zeros((BLOCK, 2), np.int16)
                 self.max_render_ms = max(self.max_render_ms, (time.perf_counter() - t0) * 1000)
                 self.sdl.SDL_QueueAudio(self.dev, pcm.ctypes.data, pcm.nbytes)
                 started = True
@@ -762,7 +823,9 @@ class Engine:
 
     def shutdown(self):
         self.running = False
-        time.sleep(0.05)
+        thread = getattr(self, "thread", None)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=1.0)
         if self.dev is not None:
             self.sdl.SDL_CloseAudioDevice(self.dev)
             self.dev = None
@@ -795,7 +858,7 @@ class Engine:
         self.reverb_size = float(min(1, max(0, d.get("reverb_size", 0.4))))
         self.repeat_div = int(d.get("repeat_div", 3)) % len(RATES)
         self.stutter_div = int(d.get("stutter_div", 1)) % len(STUTTERS)
-        self.holds.clear()
+        self.cmds.append(("relall",))      # the audio thread owns self.holds
         self.master = float(min(1.5, max(0, d.get("master", 0.8))))
         self.cur_pat = int(d.get("pattern", 0)) % NPAT
         self.pending_pat = None
@@ -835,6 +898,9 @@ class Engine:
                     if s.get("name"):
                         p.name = str(s["name"])[:24]
                 except (OSError, ValueError):
+                    # Keep the assignment: the file may be back next time (SD card not mounted, say),
+                    # and saving must not turn a missing sample into an empty pad.
+                    p.path, p.name = path, str(s.get("name") or "MISSING")[:24]
                     missing.append(s["path"])
         prune_cache(self.pads)
         return missing
@@ -846,5 +912,12 @@ class Engine:
         os.replace(tmp, path)
 
     def load(self, path):
+        """Load a project file. Raises ValueError if it is not a usable project."""
         with open(path) as f:
-            return self.from_dict(json.load(f))
+            d = json.load(f)
+        if not isinstance(d, dict):
+            raise ValueError("not a project file")
+        try:
+            return self.from_dict(d)
+        except (TypeError, AttributeError, KeyError, IndexError, OverflowError) as e:
+            raise ValueError("project file is damaged (%s)" % type(e).__name__)

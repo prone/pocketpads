@@ -1,6 +1,7 @@
 """PocketPads: a 16-pad sample sequencer for Linux handhelds."""
 import gc
 import glob
+import hashlib
 import json
 import math
 import os
@@ -26,7 +27,11 @@ VERSION = "0.03"
 CONVERT_EXTS = (".mp3", ".flac", ".ogg", ".m4a", ".aac", ".aif", ".aiff", ".opus")   # read through ffmpeg
 CONVERT_SECONDS = 180
 REC_SECONDS = 10
-REC_DEVICE = "hw:0,0"     # the handheld's built-in microphone
+# Recording goes straight to an ALSA device. hw:0,0 at 48 kHz mono is the TrimUI Smart Pro's built-in microphone;
+# set PP_REC_DEVICE (for example "default" or "plughw:1,0") on other hardware.
+REC_DEVICE = os.environ.get("PP_REC_DEVICE", "hw:0,0")
+SPREAD_MAX_SECONDS = 20   # SPREAD makes 16 pitched copies, so long samples would exhaust memory
+LONG_SAMPLE_SECONDS = 4   # above this, re-rendering a pad waits until the value stops changing
 OPEN_GRAINBRICK = 42  # exit code the launcher script turns into "run GrainBrick, then come back"
 
 
@@ -88,7 +93,7 @@ class App:
         self.fonts = {k: pygame.font.Font(None, max(8, int(s * self.u)))
                       for k, s in (("s", 13), ("h", 16), ("m", 17), ("l", 26), ("xl", 40))}
         self.cache = {}
-        self.print("screen %dx%d scale %.2f" % (self.W, self.H, self.u))
+        self.logline("screen %dx%d scale %.2f" % (self.W, self.H, self.u))
         self.splash("LOADING")
         splash_until = time.time() + (0 if os.environ.get("PP_SCRIPT") and not os.environ.get("PP_SPLASH") else 1.5)
         self.init_controllers()
@@ -106,7 +111,10 @@ class App:
         self.audition = None   # (pad, start time) while the SOUND page is playing a pad
         self.wheel, self.wheel_acc, self.wheel_seen = 0.0, 0.0, False
         self.perf_held = {}    # button -> performance effect it is holding
-        self.slot = 1
+        self.slot = 1          # slot the PROJECT row points at
+        self.loaded = 1        # slot the project in memory belongs to (autosave goes here)
+        self.pending_bake = None
+        self.is_repeat = False
         self.held = set()
         self.repeat = {}
         self.toast, self.toast_until = "", 0
@@ -124,12 +132,12 @@ class App:
         try:
             with open(STATE) as f:
                 self.slot = min(SLOTS, max(1, int(json.load(f).get("slot", 1))))
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError, AttributeError):
             pass
-        if os.path.exists(self.slot_path()):
-            self.load_project(quiet=True)
-        else:
+        self.loaded = self.slot
+        if not (os.path.exists(self.slot_path()) and self.load_project(quiet=True)):
             self.new_project(quiet=True)
+        signal.signal(signal.SIGTERM, lambda *_: setattr(self, "running", False))   # save on a system kill too
         while time.time() < splash_until:      # keep the title up long enough to read
             pygame.event.pump()
             time.sleep(0.05)
@@ -140,10 +148,10 @@ class App:
         gc.disable()
         self.eng.start_audio(enable=not os.environ.get("PP_NOAUDIO"))
         if self.eng.audio_error:
-            self.print("audio error: " + self.eng.audio_error)
+            self.logline("audio error: " + self.eng.audio_error)
             self.say("NO AUDIO: " + self.eng.audio_error, 6)
 
-    def print(self, msg):
+    def logline(self, msg):
         self.log.write("%.2f %s\n" % (time.time() % 10000, msg))
 
     def splash(self, status):
@@ -158,7 +166,7 @@ class App:
             pygame.draw.rect(self.screen, LINE, (int(self.ox + 320 * self.u - w / 2) - 2, int(self.oy + 28 * self.u) - 2,
                                                  w + 4, h + 4), max(2, self.S(1)), self.S(4))
         except (pygame.error, OSError) as e:
-            self.print("splash art missing: %s" % e)
+            self.logline("splash art missing: %s" % e)
         self.text("PocketPads", 320, 272, "xl", TEXT, "c")
         self.text("VERSION %s" % VERSION, 320, 302, "m", ORANGE, "c")
         self.text(status, 320, 332, "s", DIM, "c")
@@ -174,15 +182,15 @@ class App:
                 if controller.is_controller(i):
                     c = controller.Controller(i)
                     self.controllers.append(c)
-                    self.print("controller %d: %s" % (i, c.name))
+                    self.logline("controller %d: %s" % (i, c.name))
         except Exception as e:
-            self.print("controller api unavailable: %r" % e)
+            self.logline("controller api unavailable: %r" % e)
         if not self.controllers:
             for i in range(pygame.joystick.get_count()):
                 j = pygame.joystick.Joystick(i)
                 j.init()
                 self.joysticks.append(j)
-                self.print("joystick %d: %s buttons=%d hats=%d" % (i, j.get_name(), j.get_numbuttons(), j.get_numhats()))
+                self.logline("joystick %d: %s buttons=%d hats=%d" % (i, j.get_name(), j.get_numbuttons(), j.get_numhats()))
         self.btn_names = {}
         for name, label in PAD_BUTTONS.items():
             const = getattr(pygame, "CONTROLLER_BUTTON_" + name.upper().replace("DP", "DPAD_"), None)
@@ -205,7 +213,7 @@ class App:
             down = e.type == pygame.CONTROLLERBUTTONDOWN
             name = self.btn_names.get(e.button)
             if down:
-                self.print("cbutton %s -> %s" % (e.button, name))
+                self.logline("cbutton %s -> %s" % (e.button, name))
             if name:
                 self.button(name, down)
         elif e.type == pygame.CONTROLLERAXISMOTION:
@@ -213,7 +221,7 @@ class App:
                 self.wheel = e.value / 32768.0
                 if not self.wheel_seen and abs(self.wheel) > 0.5:
                     self.wheel_seen = True
-                    self.print("right stick seen: %.2f" % self.wheel)
+                    self.logline("right stick seen: %.2f" % self.wheel)
             name = {pygame.CONTROLLER_AXIS_TRIGGERLEFT: "l2", pygame.CONTROLLER_AXIS_TRIGGERRIGHT: "r2"}.get(e.axis)
             if name:
                 down = e.value > 12000
@@ -223,7 +231,7 @@ class App:
         elif not self.controllers and e.type in (pygame.JOYBUTTONDOWN, pygame.JOYBUTTONUP):
             down = e.type == pygame.JOYBUTTONDOWN
             if down:
-                self.print("jbutton %s" % e.button)
+                self.logline("jbutton %s" % e.button)
             name = self.joy_map().get(str(e.button))
             if name:
                 self.button(name, down)
@@ -289,6 +297,7 @@ class App:
             return
         push = (abs(v) - 0.25) / 0.75
         self.wheel_acc += dt * (2.0 + 38.0 * push * push)      # 2 to 40 changes a second
+        self.select_alone = False               # using the wheel with SELECT held is not a SELECT tap
         while self.wheel_acc >= 1.0:
             self.wheel_acc -= 1.0
             self.press("right" if v > 0 else "left", repeat=True)
@@ -300,32 +309,50 @@ class App:
     def slot_path(self, slot=None):
         return os.path.join(PROJECTS, "P%02d.json" % (slot or self.slot))
 
-    def save_project(self, quiet=False):
+    def save_project(self, quiet=False, autosave=False):
+        """Save to the slot the PROJECT row shows; autosave always goes to the slot the project came from."""
+        slot = self.loaded if autosave else self.slot
         try:
-            self.eng.save(self.slot_path())
+            self.flush_bake()
+            self.eng.save(self.slot_path(slot))
+            self.loaded = slot
             with open(STATE, "w") as f:
-                json.dump({"slot": self.slot}, f)
+                json.dump({"slot": slot}, f)
             if not quiet:
-                self.say("SAVED P%02d" % self.slot)
+                self.say("SAVED P%02d" % slot)
         except OSError as e:
             self.say("SAVE FAILED: %s" % e, 4)
 
     def load_project(self, quiet=False):
-        if not os.path.exists(self.slot_path()):
+        """Load the slot the PROJECT row shows. Returns True on success."""
+        path = self.slot_path()
+        if not os.path.exists(path):
             self.say("P%02d IS EMPTY" % self.slot)
-            return
+            return False
         try:
             self.eng.stop()
-            missing = self.eng.load(self.slot_path())
-            if missing:
-                self.say("%d SAMPLE(S) MISSING" % len(missing), 4)
-            elif not quiet:
-                self.say("LOADED P%02d" % self.slot)
+            self.pending_bake = None
+            missing = self.eng.load(path)
         except (OSError, ValueError) as e:
-            self.say("LOAD FAILED: %s" % e, 4)
+            # Keep the unreadable file aside so autosave cannot destroy what might be recoverable.
+            self.logline("load failed: %s: %s" % (path, e))
+            try:
+                os.replace(path, path + ".damaged")
+            except OSError:
+                pass
+            self.new_project(quiet=True)
+            self.say("P%02d WAS DAMAGED - KEPT AS .damaged" % self.slot, 5)
+            return False
+        self.loaded = self.slot
+        if missing:
+            self.say("%d SAMPLE(S) MISSING" % len(missing), 4)
+        elif not quiet:
+            self.say("LOADED P%02d" % self.slot)
+        return True
 
     def new_project(self, quiet=False):
         self.eng.stop()
+        self.loaded, self.pending_bake = self.slot, None
         self.eng.from_dict({"bpm": 112})
         pads = self.eng.pads
         for p, path in zip(pads, self.kit_paths):
@@ -340,6 +367,7 @@ class App:
     def press(self, b, repeat=False):
         e = self.eng
         sel = "select" in self.held
+        self.is_repeat = repeat
         if self.recording:
             if b in ("A", "B", "start"):
                 self.stop_record()
@@ -390,6 +418,8 @@ class App:
         e = self.eng
         for mod, base in (("l2", 0), ("r2", 8)):
             if mod in self.held and b in DRUM_KEYS:
+                if self.is_repeat:          # a held d-pad auto-repeats for menus; a drum hit must not
+                    return
                 i = base + DRUM_KEYS.index(b)
                 self.sel = i
                 self.hit(i, b)
@@ -481,29 +511,30 @@ class App:
         elif b in ("left", "right"):
             d = (1 if b == "right" else -1) * (5 if "Y" in self.held else 1)
             row = self.SOUND_ROWS[self.sound_row]
-            if row == "WAVEFORM":          # nudge the start point; hold SELECT for the end is taken, so use START/END rows
-                p.start = round(min(p.end - 0.002, max(0.0, p.start + 0.002 * d)), 3)
-                p.bake()
+            if row == "WAVEFORM":          # on the waveform, left and right nudge the start point
+                step = self.trim_step(p)
+                p.start = round(max(0.0, min(p.end - step, p.start + step * d)), 6)
+                self.rebake(p)
             elif row == "VOLUME":
                 p.vol = round(min(1.5, max(0.0, p.vol + 0.05 * d)), 2)
             elif row == "PITCH":
                 p.pitch = int(min(24, max(-24, p.pitch + d)))
-                p.bake()
+                self.rebake(p)
             elif row == "FILTER":
                 p.filt = int(min(100, max(-100, p.filt + 2 * d)))
-                p.bake()
+                self.rebake(p)
             elif row == "FINE TUNE":
                 p.fine = int(min(50, max(-50, p.fine + d)))
-                p.bake()
+                self.rebake(p)
             elif row == "MODE":
                 p.mode = (p.mode + (1 if d > 0 else -1)) % len(MODES)
             elif row == "REVERSE":
                 p.rev = not p.rev
-                p.bake()
+                self.rebake(p)
             elif row in ("FADE IN", "FADE OUT"):
                 k = "fin" if row == "FADE IN" else "fout"
                 setattr(p, k, int(min(2000, max(0, getattr(p, k) + 10 * d))))
-                p.bake()
+                self.rebake(p)
             elif row == "CHOP":
                 self.chop_mode = (self.chop_mode + (1 if d > 0 else -1)) % len(self.CHOPS)
             elif row == "FIT TO TEMPO":
@@ -515,11 +546,13 @@ class App:
             elif row == "CHOKE":
                 p.choke = (p.choke + (1 if d > 0 else -1)) % (CHOKE_GROUPS + 1)
             elif row == "START":
-                p.start = round(min(p.end - 0.002, max(0.0, p.start + 0.002 * d)), 3)
-                p.bake()
+                step = self.trim_step(p)
+                p.start = round(max(0.0, min(p.end - step, p.start + step * d)), 6)
+                self.rebake(p)
             elif row == "END":
-                p.end = round(min(1.0, max(p.start + 0.002, p.end + 0.002 * d)), 3)
-                p.bake()
+                step = self.trim_step(p)
+                p.end = round(min(1.0, max(p.start + step, p.end + step * d)), 6)
+                self.rebake(p)
             elif row == "SAMPLE":
                 self.open_browser()
         elif b == "A":
@@ -532,6 +565,8 @@ class App:
                 self.start_chop()
             elif row == "FIT TO TEMPO":
                 self.fit_to_tempo()
+            elif row == "SPREAD" and p.region_seconds() > SPREAD_MAX_SECONDS:
+                self.say("TOO LONG TO SPREAD (%d s MAX) - TRIM OR CHOP IT" % SPREAD_MAX_SECONDS, 3.5)
             elif row == "SPREAD":
                 self.confirm = ("SPREAD PAD %d ACROSS ALL 16 PADS?" % (self.sel + 1), self.spread)
             else:
@@ -563,7 +598,7 @@ class App:
             return
         path = p.path
         self.confirm = ("CHOP INTO %d? REPLACES PADS 1-%d" % (len(slices), len(slices)),
-                        lambda: (self.put_slices(path, slices), self.say("%d CHOPS ON THE PADS" % len(slices), 2.5)))
+                        lambda: self.put_slices(path, slices) and self.say("%d CHOPS ON THE PADS" % len(slices), 2.5))
 
     def live_pos(self):
         lv = self.live
@@ -582,8 +617,8 @@ class App:
         if cancel or not marks:
             self.say("CHOP CANCELLED" if cancel else "NO SLICE POINTS WERE TAPPED", 2)
             return
-        self.put_slices(lv["path"], list(zip(marks, marks[1:] + [1.0])))
-        self.say("%d CHOPS ON THE PADS" % len(marks), 2.5)
+        if self.put_slices(lv["path"], list(zip(marks, marks[1:] + [1.0]))):
+            self.say("%d CHOPS ON THE PADS" % len(marks), 2.5)
 
     def tick_live(self):
         if self.live and self.live_pos() >= 1.0:
@@ -623,12 +658,12 @@ class App:
         self.eng.capture_start()
         if not self.eng.playing:
             self.eng.play()
-        self.resampling = time.time()
+        self.resampling = (time.time(), self.sel)      # remember the target: the selection may move while playing
         self.page = PAGES.index("FX")
         self.say("RESAMPLING: PLAY, THEN PRESS START TO FINISH", 4)
 
     def finish_resample(self):
-        self.resampling = None
+        target, self.resampling = self.resampling[1], None
         self.eng.stop()
         audio = self.eng.capture_stop()
         loud = np.nonzero(np.abs(audio).max(axis=1) > 0.003)[0] if len(audio) else []
@@ -638,13 +673,14 @@ class App:
         audio = audio[max(0, loud[0] - 64):loud[-1] + 2205]
         folder = os.path.join(APP_DIR, "samples", "resampled")
         os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, time.strftime("RS %Y-%m-%d %H-%M-%S.wav"))
+        path = self.unused_path(folder, time.strftime("RS %Y-%m-%d %H-%M-%S"))
         try:
             write_wav(path, audio / max(1.0, float(np.abs(audio).max())))
-            p = self.eng.pads[self.sel]
+            p = self.eng.pads[target]
             p.clear()
             p.load(path)
             p.name = "RESAMPLE"
+            self.sel = target
         except (OSError, ValueError) as e:
             self.say("RESAMPLE FAILED: %s" % e, 4)
             return
@@ -652,8 +688,28 @@ class App:
         self.page = PAGES.index("SOUND")
         self.say("%.1f s RESAMPLED TO PAD %d" % (len(audio) / SR, self.sel + 1), 3)
 
+    @staticmethod
+    def trim_step(p):
+        """One nudge of a start or end point: 10 ms, or 0.2% of the file for very short samples."""
+        n = len(p.raw) if p.raw is not None else SR
+        return min(0.002, 0.01 * SR / n)
+
+    def rebake(self, p):
+        """Re-render a pad after a setting change. Long samples wait until the value stops moving,
+        because rendering them takes long enough to make the controls stutter."""
+        if p.region_seconds() > LONG_SAMPLE_SECONDS:
+            self.pending_bake = (p, time.time() + 0.2)
+        else:
+            p.bake()
+
+    def flush_bake(self, force=True):
+        if self.pending_bake and (force or time.time() >= self.pending_bake[1]):
+            p, self.pending_bake = self.pending_bake[0], None
+            p.bake()
+
     def toggle_audition(self):
         """Play the selected pad, or stop it if it is already sounding."""
+        self.flush_bake()
         if self.auditioning() is not None:
             self.eng.note_off(self.sel)
             self.audition = None
@@ -769,7 +825,7 @@ class App:
                 if (d.get("sample") or {}).get("path") and len(cuts) >= 3:
                     name = d.get("name") or os.path.splitext(os.path.basename(f))[0]
                     out.append(("%s   (%d slices)" % (name, len(cuts) - 1), f))
-            except (OSError, ValueError, AttributeError):
+            except (OSError, ValueError, AttributeError, TypeError):
                 continue
         return out
 
@@ -787,13 +843,20 @@ class App:
             self.say("IMPORT FAILED: %s" % e, 4)
             return
         total = len(slices)
-        self.put_slices(path, slices[:NPADS])
+        if not self.put_slices(path, slices[:NPADS]):
+            return
         extra = "  (FIRST 16 OF %d)" % total if total > NPADS else ""
         self.say("IMPORTED %d CHOPS%s" % (min(total, NPADS), extra), 3)
 
     def put_slices(self, path, slices):
-        """One slice per pad, starting at pad 1."""
+        """One slice per pad, starting at pad 1. Returns False (and changes nothing) if the file is gone."""
+        try:
+            load_cached(path)
+        except (OSError, ValueError) as e:
+            self.say("CAN'T READ THE SAMPLE: %s" % e, 4)
+            return False
         self.eng.stop()
+        self.pending_bake = None
         for p, (a, z) in zip(self.eng.pads, slices):
             p.clear()
             p.load(path)
@@ -803,6 +866,16 @@ class App:
             p.name = "CHOP %d" % (i + 1)
         prune_cache(self.eng.pads)
         self.sel, self.page = 0, PAGES.index("PLAY")
+        return True
+
+    @staticmethod
+    def unused_path(folder, stem):
+        """A WAV path that does not exist yet (the device clock can reset, so timestamps may repeat)."""
+        path, n = os.path.join(folder, stem + ".wav"), 1
+        while os.path.exists(path):
+            n += 1
+            path = os.path.join(folder, "%s (%d).wav" % (stem, n))
+        return path
 
     # ------------------------------------------------------------ record and chop
     def start_record(self):
@@ -810,7 +883,7 @@ class App:
         self.eng.stop()
         folder = os.path.join(APP_DIR, "samples", "recorded")
         os.makedirs(folder, exist_ok=True)
-        path = os.path.join(folder, time.strftime("REC %Y-%m-%d %H-%M-%S.wav"))
+        path = self.unused_path(folder, time.strftime("REC %Y-%m-%d %H-%M-%S"))
         fake = os.environ.get("PP_REC_FAKE")
         if fake:
             cmd = ["cp", fake, path]
@@ -829,7 +902,7 @@ class App:
             self.say("CANNOT RECORD: %s" % e, 4)
             return
         self.recording = {"proc": proc, "path": path, "t0": time.time(), "level": 0.0}
-        self.print("record start: %s" % " ".join(cmd))
+        self.logline("record start: %s" % " ".join(cmd))
 
     def tick_record(self):
         r = self.recording
@@ -868,18 +941,19 @@ class App:
             raw, _ = load_cached(path)
             slices = find_chops(raw, NPADS)
         except (OSError, ValueError) as e:
-            self.print("record failed: %s | %s" % (e, err))
+            self.logline("record failed: %s | %s" % (e, err))
             busy = "busy" in err.lower()
-            self.say("MIC IS BUSY - RESTART THE DEVICE" if busy else ("RECORDING FAILED: %s" % (err or e))[:60], 5)
+            self.say("MIC IS BUSY - CLOSE OTHER AUDIO APPS OR RESTART" if busy else ("RECORDING FAILED: %s" % (err or e))[:60], 5)
             try:
                 os.remove(path)
             except OSError:
                 pass
             return
-        self.put_slices(path, slices)
+        if not self.put_slices(path, slices):
+            return
         for p in self.eng.pads[len(slices):]:
             p.clear()
-        self.print("record ok: %.1f s peak %.3f, %d chops" % (len(mono) / 44100.0, peak, len(slices)))
+        self.logline("record ok: %.1f s peak %.3f, %d chops" % (len(mono) / 44100.0, peak, len(slices)))
         self.say("RECORDED %d CHOPS ONTO THE PADS" % len(slices), 3)
 
     def press_picker(self, b):
@@ -944,7 +1018,13 @@ class App:
         br = self.browser
         items = br["items"]
         if b == "B":
+            self.eng.note_off(self.sel)
             self.browser = None
+            prune_cache(self.eng.pads)
+            return
+        if br["dir"] is not None and not self.root_of(br["dir"]):
+            br["dir"] = None                # the folder went away (card removed, GrainBrick moved)
+            self.browser_list()
             return
         if not items:
             return
@@ -976,14 +1056,19 @@ class App:
                 path = os.path.join(br["dir"], name)
                 if name.lower().endswith(CONVERT_EXTS):
                     path = self.convert(path)
+                if b == "X":                # preview: hear the file without touching the pad
+                    self.eng.note_off(self.sel)
+                    self.eng.preview(self.sel, load_cached(path)[0])
+                    return
+                self.eng.note_off(self.sel)
+                self.pending_bake = None
                 pad.load(path)
                 pad.start, pad.end = 0.0, 1.0
                 pad.bake()
                 self.eng.trigger(self.sel)
-                if b == "A":
-                    self.browser = None
-                    prune_cache(self.eng.pads)
-                    self.say("PAD %d: %s" % (self.sel + 1, pad.name))
+                self.browser = None
+                prune_cache(self.eng.pads)
+                self.say("PAD %d: %s" % (self.sel + 1, pad.name))
             except (OSError, ValueError) as e:
                 self.say("CAN'T LOAD: %s" % e, 3)
 
@@ -991,14 +1076,16 @@ class App:
         """Turn an MP3 (or other compressed file) into a WAV in samples/converted, once, and return its path."""
         folder = os.path.join(SAMPLES, "converted")
         os.makedirs(folder, exist_ok=True)
-        out = os.path.join(folder, os.path.splitext(os.path.basename(src))[0] + ".wav")
+        # The source folder goes into the name so two files called "loop" in different places stay separate.
+        tag = hashlib.md5(os.path.abspath(src).encode("utf-8", "replace")).hexdigest()[:6]
+        out = os.path.join(folder, "%s-%s.wav" % (os.path.splitext(os.path.basename(src))[0], tag))
         if os.path.exists(out) and os.path.getmtime(out) >= os.path.getmtime(src) and os.path.getsize(out) > 1000:
             return out
         self.say("CONVERTING %s ..." % os.path.basename(src)[:36], 60)
         self.draw()
         tmp = out + ".part"
         try:
-            r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", src, "-t", str(CONVERT_SECONDS), "-vn", "-ac", "2",
+            r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-protocol_whitelist", "file", "-i", src, "-t", str(CONVERT_SECONDS), "-vn", "-ac", "2",
                                 "-ar", str(SR), "-c:a", "pcm_s16le", "-f", "wav", tmp],
                                capture_output=True, timeout=120)
         except FileNotFoundError:
@@ -1098,7 +1185,7 @@ class App:
             self.box(x, 5, 22, 20, fill, None if on else LINE)
             self.text("ABCD"[i], x + 11, 15, "m", DARK if on else TEXT, "c")
             x += 25
-        self.text("P%02d" % self.slot, 386, 15, "m", DIM)
+        self.text("P%02d" % self.loaded, 386, 15, "m", DIM)
         self.text("%d" % round(e.bpm), 462, 15, "l", TEXT, "r")
         self.text("BPM", 466, 16, "s", DIM)
         if self.resampling:
@@ -1358,7 +1445,8 @@ class App:
         e = self.eng
         pat = e.patterns[e.cur_pat]
         exists = os.path.exists(self.slot_path())
-        vals = {"PROJECT": "P%02d  %s" % (self.slot, "(saved)" if exists else "(empty)"),
+        here = "  - open now" if self.slot == self.loaded else ""
+        vals = {"PROJECT": "P%02d  %s%s" % (self.slot, "(saved)" if exists else "(empty)", here),
                 "SAVE": "save to P%02d" % self.slot, "LOAD": "load P%02d" % self.slot,
                 "NEW": "starter kit and demo beat", "TEMPO": "%d BPM" % round(e.bpm),
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
@@ -1387,7 +1475,7 @@ class App:
     def draw_browser(self):
         br = self.browser
         self.box(60, 34, 520, 296, PANEL, ORANGE, 6, 2)
-        if br["dir"] is None:
+        if br["dir"] is None or not self.root_of(br["dir"]):
             where = "choose a folder"
         else:
             label, rd = self.root_of(br["dir"])
@@ -1446,15 +1534,18 @@ class App:
                 self.handle_event(ev)
             self.tick_repeat()
             self.tick_record()
+            self.flush_bake(force=False)
             self.tick_live()
             self.tick_wheel(1 / 30.0)
-            if self.resampling and time.time() - self.resampling > 60:
+            if self.resampling and time.time() - self.resampling[0] > 60:
                 self.finish_resample()
             self.run_script()
             self.draw()
             clock.tick(30)
-        self.save_project(quiet=True)
-        self.print("exit: dropouts=%d peak_render=%.1fms" % (self.eng.underruns, self.eng.max_render_ms))
+        self.save_project(quiet=True, autosave=True)
+        if self.eng.render_errors:
+            self.logline("render errors: %d, first:\n%s" % (self.eng.render_errors, self.eng.last_error))
+        self.logline("exit: dropouts=%d peak_render=%.1fms" % (self.eng.underruns, self.eng.max_render_ms))
         self.eng.shutdown()
         pygame.quit()
         return self.exit_code

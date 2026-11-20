@@ -81,7 +81,10 @@ def ensure_kit(folder):
     os.makedirs(folder, exist_ok=True)
     paths = [os.path.join(folder, "%02d %s.wav" % (i + 1, nm)) for i, nm in enumerate(NAMES)]
     stamp = os.path.join(folder, ".version")
-    current = os.path.exists(stamp) and open(stamp).read().strip() == KIT_VERSION
+    current = False
+    if os.path.exists(stamp):
+        with open(stamp) as f:
+            current = f.read().strip() == KIT_VERSION
     if not current or not all(os.path.exists(p) for p in paths):
         sounds = build(np.random.default_rng(7))
         for p, nm in zip(paths, NAMES):

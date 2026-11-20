@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PocketPads manual</title>
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/touch-icon.png">
 <meta name="description" content="How PocketPads works: a 16-pad sample sequencer for the TrimUI Smart Pro, and how it trades sounds with GrainBrick.">
 <style>
 @font-face {
@@ -262,6 +264,8 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <li><b>Filter.</b> One control: left closes a low-pass (darker), right raises a high-pass (thinner).</li>
         <li><b>Delay and Reverb.</b> How much of this pad is sent to the shared echo and room.</li>
         <li><b>Choke.</b> Pads in the same group cut each other off, so a closed hi-hat silences the open one.</li>
+        <li><b>Hear it.</b> The waveform is selected first: press A to play the pad and A again to stop, with a line showing where it is. A tap of SELECT does the same from any row, so you can change a setting and hear it straight away.</li>
+        <li><b>Sample.</b> The first row in the list opens the file browser. X previews a file without loading it.</li>
         <li><b>Mode.</b> One-shot plays to the end. Hold plays only while the button is down. Loop starts on one hit and stops on the next.</li>
         <li><b>Reverse, Fade in, Fade out, Fine tune.</b> Flip the sound, soften its edges, or tune it in cents.</li>
         <li><b>Chop.</b> Cut this pad's sample onto the pads: at detected hits, into 4, 8 or 16 equal pieces, or live, where the sample plays and you tap A wherever a new pad should begin.</li>
@@ -416,6 +420,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   <div class="status">
     <h3>Where it stands</h3>
     <p>This is an early version, tested on one TrimUI Smart Pro running KNULLI Scarab. Pads, the step grid, patterns, projects, the GrainBrick link, note repeat, per-pad filter, delay and reverb, choke groups and the performance effects, microphone recording, chopping and resampling are all in. Not built: chaining patterns into a song, lo-fi effects, time-stretch that keeps pitch, and MIDI controllers.</p>
+    <p>PocketPads is open source under the MIT licence. The code and install instructions are at <a href="https://github.com/prone/pocketpads">github.com/prone/pocketpads</a>.</p>
   </div>
 </section>
 
