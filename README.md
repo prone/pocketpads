@@ -1,6 +1,6 @@
 # PocketPads
 
-A 16-pad sample sequencer and sampler for Linux handhelds, built for the TrimUI Smart Pro running [KNULLI](https://knulli.org). Put sounds on pads, tap out a beat, chop a recording, and build it into patterns, all from the gamepad.
+A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux handhelds, built for the TrimUI Smart Pro running [KNULLI](https://knulli.org). Put sounds on pads, tap out a beat, chop a recording, and build it into patterns, all from the gamepad.
 
 ![PocketPads artwork: a pixel-art drum sampler](pocketpads/art/pocketpads.png)
 
