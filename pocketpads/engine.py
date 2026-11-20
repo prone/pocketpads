@@ -38,8 +38,12 @@ import numpy as np
 SR = 44100
 BLOCK = 512
 NPADS = 16
-NPAT = 4
-MAX_STEPS = 32
+NPAT = 8
+PAT_NAMES = "ABCDEFGH"
+MIN_STEPS, MAX_STEPS = 16, 128
+SONG_SLOTS = 64                      # longest pattern chain
+NOTE_RANGE = 24                      # a step can play up to two octaves above or below the pad's pitch
+VARIANT_MAX_SECONDS = 12             # pads longer than this ignore step notes (each note keeps its own copy)
 FADE = 256
 HEADROOM = 0.7
 KNEE = 0.7
@@ -423,6 +427,7 @@ class Pad:
     def clear(self):
         self.name, self.path = "EMPTY", ""
         self.raw = self.buf = self.peaks = None
+        self.variants = {}               # semitone offset -> buffer, for steps that play the pad at another note
         self.vol, self.pitch, self.start, self.end = 0.8, 0, 0.0, 1.0
         self.filt, self.dsend, self.rsend, self.choke = 0, 0.0, 0.0, 0
         self.fine, self.mode, self.rev, self.fin, self.fout = 0, 0, False, 0, 0
@@ -468,13 +473,28 @@ class Pad:
         seg[:fi] *= np.linspace(0, 1, fi, dtype=np.float32)[:, None]
         seg[-fo:] *= np.linspace(1, 0, fo, dtype=np.float32)[:, None]
         self.buf = seg
+        self.set_variants(self.variants.keys())
+
+    def set_variants(self, offsets):
+        """Keep a repitched copy of the baked sound for each semitone offset the patterns use."""
+        buf, out = self.buf, {}
+        if buf is not None and len(buf) <= VARIANT_MAX_SECONDS * SR:
+            for n in set(offsets):
+                if n:
+                    v = resample(buf, 2.0 ** (n / 12.0))
+                    fo = min(220, len(v) // 2)
+                    v[-fo:] *= np.linspace(1, 0, fo, dtype=np.float32)[:, None]
+                    out[n] = v
+        self.variants = out              # one swap, so the audio thread never sees a half-built table
 
     def seconds(self):
         return 0.0 if self.buf is None else len(self.buf) / SR
 
 
 def new_pattern():
-    return {"length": 16, "steps": [[0] * MAX_STEPS for _ in range(NPADS)]}
+    """An empty pattern. steps: 0 off, 1 on, 2 accent. notes: semitones above the pad's own pitch."""
+    return {"length": 16, "steps": [[0] * MAX_STEPS for _ in range(NPADS)],
+            "notes": [[0] * MAX_STEPS for _ in range(NPADS)]}
 
 
 def _rel(path):
@@ -491,6 +511,7 @@ class Engine:
         self.pads = [Pad(i) for i in range(NPADS)]
         self.patterns = [new_pattern() for _ in range(NPAT)]
         self.cur_pat, self.pending_pat = 0, None
+        self.song, self.song_on, self.song_pos = [], False, 0     # chain of pattern numbers; next slot to play
         self.bpm, self.swing, self.master = 120.0, 50.0, 0.8
         self.delay_div, self.delay_fb, self.reverb_size = 1, 0.45, 0.4
         self.repeat_on, self.repeat_div, self.stutter_div = False, 3, 1
@@ -507,6 +528,8 @@ class Engine:
         self._bar_clock = 0.0
         self.playing = self.rec = False
         self.step = -1
+        self.song_slot = 0               # chain slot now playing
+        self.bars_played = 0             # patterns completed since play started (used when exporting)
         self.voices = []
         self.cmds = deque()
         self.pad_flash = [0.0] * NPADS
@@ -578,6 +601,33 @@ class Engine:
         else:
             self.cur_pat, self.pending_pat = index, None
 
+    def set_note(self, pat, pad, step, note):
+        """Give one step a note, in semitones from the pad's pitch, and prepare the audio for it."""
+        self.patterns[pat]["notes"][pad][step] = int(min(NOTE_RANGE, max(-NOTE_RANGE, note)))
+        self.refresh_variants(pad)
+
+    def refresh_variants(self, pad=None):
+        """Make sure every note used in the patterns has audio ready (call after editing notes or loading)."""
+        for i in (range(NPADS) if pad is None else (pad,)):
+            used = {n for pat in self.patterns for n, on in zip(pat["notes"][i], pat["steps"][i]) if n and on}
+            if used != set(self.pads[i].variants):
+                self.pads[i].set_variants(used)
+
+    def copy_pattern(self, src, dst):
+        a = self.patterns[src]
+        self.patterns[dst] = {"length": a["length"], "steps": [r[:] for r in a["steps"]],
+                              "notes": [r[:] for r in a["notes"]]}
+
+    def clear_pattern(self, index):
+        length = self.patterns[index]["length"]
+        self.patterns[index] = new_pattern()
+        self.patterns[index]["length"] = length
+        self.refresh_variants()
+
+    def song_bars(self):
+        """Total length of the song in steps (0 if the chain is empty)."""
+        return sum(self.patterns[i]["length"] for i in self.song)
+
     def step_frames(self):
         return SR * 60.0 / self.bpm / 4.0
 
@@ -637,6 +687,7 @@ class Engine:
                 self.playing = True
                 self._base = self._next_time = self._bar_clock = float(self._clock)
                 self._next_step = 0
+                self.song_pos = self.bars_played = 0
                 self._skip.clear()
             elif c[0] == "stop":
                 for v in self.voices:           # looping pads stop with the beat
@@ -668,7 +719,12 @@ class Engine:
             while self._next_time < end:
                 off = max(0, int(self._next_time - self._clock))
                 st = self._next_step
-                if st == 0 and self.pending_pat is not None:
+                if st == 0 and self.song_on and self.song:
+                    song = self.song                    # song mode: each pattern plays once, then the next
+                    self.song_slot = self.song_pos % len(song)
+                    self.cur_pat, self.pending_pat = song[self.song_slot] % NPAT, None
+                    self.song_pos = (self.song_slot + 1) % len(song)
+                elif st == 0 and self.pending_pat is not None:
                     self.cur_pat, self.pending_pat = self.pending_pat, None
                 pat = self.patterns[self.cur_pat]
                 length = pat["length"]
@@ -686,7 +742,9 @@ class Engine:
                     p = self.pads[i]
                     if p.mute or (any_solo and not p.solo):
                         continue
-                    self._start_voice(i, 1.0 if v == 1 else 1.3, off, gate=self.step_frames())
+                    note = pat["notes"][i][st]
+                    self._start_voice(i, 1.0 if v == 1 else 1.3, off, gate=self.step_frames(),
+                                      buf=p.variants.get(note) if note else None)
                     self.pad_flash[i] = now
                 self.step = st
                 self._step_clock = self._next_time
@@ -695,6 +753,8 @@ class Engine:
                 sf = self.step_frames()
                 self._base += sf
                 nxt = (st + 1) % length
+                if nxt == 0:
+                    self.bars_played += 1
                 self._next_step = nxt
                 # MPC-style swing: 50% is straight, 66% is a triplet feel, 75% is the maximum.
                 self._next_time = self._base + ((self.swing - 50.0) / 50.0 * sf if nxt % 2 else 0.0)
@@ -922,11 +982,13 @@ class Engine:
     # ----- projects
     def to_dict(self):
         return {
-            "version": 2, "bpm": self.bpm, "swing": self.swing, "master": self.master,
+            "version": 3, "bpm": self.bpm, "swing": self.swing, "master": self.master,
             "delay_div": self.delay_div, "delay_fb": self.delay_fb, "reverb_size": self.reverb_size,
             "repeat_div": self.repeat_div, "stutter_div": self.stutter_div,
             "pattern": self.cur_pat,
-            "patterns": [{"length": p["length"], "steps": p["steps"]} for p in self.patterns],
+            "patterns": [{"length": p["length"], "steps": [r[:p["length"]] for r in p["steps"]],
+                          "notes": [r[:p["length"]] for r in p["notes"]]} for p in self.patterns],
+            "song": list(self.song), "song_on": self.song_on,
             "pads": [{"path": _rel(p.path) if p.path else "", "vol": p.vol, "pitch": p.pitch,
                       "start": p.start, "end": p.end, "mute": p.mute, "name": p.name,
                       "filt": p.filt, "dsend": p.dsend, "rsend": p.rsend, "choke": p.choke,
@@ -955,11 +1017,16 @@ class Engine:
             pat = new_pattern()
             src = (d.get("patterns") or [])[i:i + 1]
             if src:
-                pat["length"] = 32 if src[0].get("length") == 32 else 16
+                pat["length"] = int(min(MAX_STEPS, max(MIN_STEPS, int(src[0].get("length", 16)))))
                 for r, row in enumerate(src[0].get("steps", [])[:NPADS]):
                     for s, v in enumerate(row[:MAX_STEPS]):
                         pat["steps"][r][s] = int(v) if v in (0, 1, 2) else 0
+                for r, row in enumerate((src[0].get("notes") or [])[:NPADS]):
+                    for s, v in enumerate(row[:MAX_STEPS]):
+                        pat["notes"][r][s] = int(min(NOTE_RANGE, max(-NOTE_RANGE, int(v))))
             self.patterns[i] = pat
+        self.song = [int(x) % NPAT for x in (d.get("song") or [])[:SONG_SLOTS]]
+        self.song_on, self.song_pos = bool(d.get("song_on", False)) and bool(self.song), 0
         for i, p in enumerate(self.pads):
             p.clear()
             src = (d.get("pads") or [])[i:i + 1]
@@ -993,6 +1060,7 @@ class Engine:
                     p.path, p.name = path, str(s.get("name") or "MISSING")[:24]
                     missing.append(s["path"])
         prune_cache(self.pads)
+        self.refresh_variants()
         return missing
 
     def save(self, path):

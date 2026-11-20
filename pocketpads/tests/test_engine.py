@@ -44,4 +44,29 @@ except ValueError as ex: print("bad file rejected:", ex)
 e3 = Engine(); e3.pads[0].load(paths[0]); e3.rec=True; e3.play(); 
 for _ in range(20): e3.render(BLOCK)
 e3.trigger(0); print("recorded steps:", [i for i,v in enumerate(e3.patterns[0]["steps"][0]) if v], "at step", e3.step)
+# --- song chain, long patterns, step notes, project round trip
+import numpy as _np, engine as _e, tempfile as _tf, os as _os
+_d = _tf.mkdtemp(); _t = _np.arange(_e.SR // 4) / _e.SR
+_e.write_wav(_os.path.join(_d, "t.wav"), 0.5 * _np.sin(2 * _np.pi * 220 * _t))
+g = _e.Engine(); g.pads[0].load(_os.path.join(_d, "t.wav")); g.bpm = 240
+g.patterns[0]["steps"][0][0] = 1
+g.patterns[1]["length"] = 40; g.patterns[1]["steps"][0][39] = 1
+g.patterns[2]["steps"][0][4] = 1; g.set_note(2, 0, 4, 12)
+assert 12 in g.pads[0].variants and abs(len(g.pads[0].variants[12]) * 2 - len(g.pads[0].buf)) < 4
+g.song, g.song_on = [0, 2, 1, 0], True
+g.play(); order = []
+for _ in range(int(_e.SR * 60 / 240 / 4 * (16 + 16 + 40 + 16 + 8) / _e.BLOCK)):
+    g.render(_e.BLOCK)
+    if not order or order[-1] != g.cur_pat: order.append(g.cur_pat)
+print("song order played:", order); assert order == [0, 2, 1, 0]
+# an octave-up step really sounds an octave up
+g = _e.Engine(); g.pads[0].load(_os.path.join(_d, "t.wav")); g.patterns[0]["steps"][0][0] = 1; g.set_note(0, 0, 0, 12); g.play()
+x = _np.concatenate([g.render(_e.BLOCK) for _ in range(12)])[:4096, 0]
+hz = _np.argmax(_np.abs(_np.fft.rfft(x * _np.hanning(4096)))) * _e.SR / 4096
+print("step note +12 plays at %.0f Hz (pad is 220)" % hz); assert abs(hz - 440) < 12
+g.song = [1, 2]; g.patterns[3]["length"] = 128; g.patterns[3]["steps"][5][127] = 2
+f = _os.path.join(_d, "p.json"); g.save(f); h = _e.Engine(); h.load(f)
+assert h.song == [1, 2] and h.patterns[3]["length"] == 128 and h.patterns[3]["steps"][5][127] == 2
+assert h.patterns[0]["notes"][0][0] == 12 and 12 in h.pads[0].variants
+h.copy_pattern(0, 6); assert h.patterns[6]["notes"][0][0] == 12; h.clear_pattern(0); assert not h.pads[0].variants or 12 in h.pads[0].variants
 print("ALL OK")
