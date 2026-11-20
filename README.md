@@ -24,7 +24,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - Fit a loop to the tempo by stretching (pitch kept) or repitching, spread one sound across all pads a semitone apart, resample the output to a pad
 - Loads WAV directly, and MP3, FLAC, OGG, M4A, AAC, AIFF and Opus through ffmpeg
 - A built-in starter kit that is synthesized on first run, so no sample files are shipped
-- The right analog stick works as a data wheel
+- The right analog stick works as a data wheel on the SOUND and PROJ pages
 
 The manual is a single static page in [`site/`](site/index.html).
 
