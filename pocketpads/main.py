@@ -16,7 +16,8 @@ import numpy as np
 import pygame
 
 import kit
-from engine import (APP_DIR, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NPADS, NPAT,
+import midi
+from engine import (APP_DIR, BLOCK, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
@@ -136,11 +137,19 @@ class App:
         os.makedirs(PROJECTS, exist_ok=True)
         os.makedirs(SAMPLES, exist_ok=True)
         self.kit_paths = kit.ensure_kit(os.path.join(SAMPLES, "kit"))
+        self.midi = midi.MidiPort(self.logline)
+        self.midi_ccs = []              # controller numbers seen so far, lowest first = knob 1
+        self.midi_held = {}             # note -> pad, for HOLD pads played from a controller
         try:
             with open(STATE) as f:
-                self.slot = min(SLOTS, max(1, int(json.load(f).get("slot", 1))))
+                state = json.load(f)
+            self.slot = min(SLOTS, max(1, int(state.get("slot", 1))))
+            self.midi.out_channel = int(state.get("midi_out", 0)) % 17
         except (OSError, ValueError, TypeError, AttributeError):
             pass
+        if not os.environ.get("PP_NOMIDI"):
+            self.midi.start()
+        self.eng.on_note = self.midi.note
         self.loaded = self.slot
         if not (os.path.exists(self.slot_path()) and self.load_project(quiet=True)):
             self.new_project(quiet=True)
@@ -326,7 +335,7 @@ class App:
             self.eng.save(self.slot_path(slot))
             self.loaded = slot
             with open(STATE, "w") as f:
-                json.dump({"slot": slot}, f)
+                json.dump({"slot": slot, "midi_out": self.midi.out_channel}, f)
             if not quiet:
                 self.say("SAVED P%02d" % slot)
         except OSError as e:
@@ -962,7 +971,7 @@ class App:
             elif row == "REPEAT RATE":
                 e.repeat_div = (e.repeat_div + d) % len(RATES)
 
-    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "PROJECT", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "LENGTH", "MASTER"]
+    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "PROJECT", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES"]
                  + (["IMPORT CHOPS", "GRAINBRICK"] if GB_DIR else []) + ["QUIT"])
 
     def press_proj(self, b, sel):
@@ -981,8 +990,8 @@ class App:
                 e.bpm = float(min(300, max(40, round(e.bpm) + d * big)))
             elif row == "SWING":
                 e.swing = float(min(75, max(50, round(e.swing) + d * big)))
-            elif row == "LENGTH":
-                self.change_length(d)
+            elif row == "MIDI OUT":
+                self.midi.out_channel = (self.midi.out_channel + d) % 17
             elif row == "MASTER":
                 e.master = round(min(1.5, max(0.0, e.master + 0.05 * d)), 2)
         elif b == "A":
@@ -1545,7 +1554,7 @@ class App:
                  "Hold L2: buttons play pads 1-8",
                  "Hold R2: buttons play pads 9-16",
                  "START  play/stop     L1 R1  page",
-                 "SELECT + L1 R1  pattern A-D",
+                 "SELECT + L1 R1  pattern A-H",
                  "SELECT + up down  tempo",
                  "SELECT + X  note repeat on/off",
                  "SELECT + left right  repeat rate"]
@@ -1692,14 +1701,16 @@ class App:
 
     def draw_proj(self):
         e = self.eng
-        pat = e.patterns[e.cur_pat]
         exists = os.path.exists(self.slot_path())
         here = "  - open now" if self.slot == self.loaded else ""
         vals = {"PROJECT": "P%02d  %s%s" % (self.slot, "(saved)" if exists else "(empty)", here),
                 "SAVE": "save to P%02d" % self.slot, "LOAD": "load P%02d" % self.slot,
                 "NEW": "starter kit and demo beat", "TEMPO": "%d BPM" % round(e.bpm),
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
-                "LENGTH": "%d steps (pattern %s)" % (pat["length"], PAT_NAMES[e.cur_pat]),
+                "MIDI OUT": ("channel %d  -  pads send notes, plus clock" % self.midi.out_channel) if self.midi.out_channel
+                            else "OFF",
+                "MIDI DEVICES": (", ".join(self.midi.devices)[:40] or "none found  -  plug one in") if self.midi.running
+                                else self.midi.error or "off",
                 "MASTER": "%d" % round(e.master * 100), "QUIT": "save and exit",
                 "RECORD MIC": "%d s from the mic, chopped onto pads" % REC_SECONDS,
                 "RESAMPLE": "record what you hear onto pad %d" % (self.sel + 1),
@@ -1707,10 +1718,18 @@ class App:
                                                            else "pattern %s x 4" % PAT_NAMES[e.cur_pat]),
                 "IMPORT CHOPS": "slices from a GrainBrick project",
                 "GRAINBRICK": "open it to sample, quit to return"}
+        shown = 13
+        top = max(0, min(self.proj_row - shown // 2, len(self.PROJ_ROWS) - shown))
+        if len(self.PROJ_ROWS) > shown:
+            self.box(411, 36, 3, shown * 22.6 - 4, DARK, None, 1)
+            self.box(411, 36 + (shown * 22.6 - 4) * top / len(self.PROJ_ROWS), 3,
+                     (shown * 22.6 - 4) * shown / len(self.PROJ_ROWS), DIM, None, 1)
         for i, name in enumerate(self.PROJ_ROWS):
-            y = 34 + i * 22.6
+            if not top <= i < top + shown:
+                continue
+            y = 34 + (i - top) * 22.6
             on = i == self.proj_row
-            self.box(8, y, 400, 21, PANEL if on else None, ORANGE if on else None, 4, 2)
+            self.box(8, y, 398, 21, PANEL if on else None, ORANGE if on else None, 4, 2)
             self.text(name, 20, y + 10.5, "m", ORANGE if on else DIM)
             self.text(vals[name], 150, y + 10.5, "m", TEXT)
         self.box(418, 38, 214, 275, PANEL, LINE, 6)
@@ -1774,8 +1793,46 @@ class App:
             elif cmd[0] == "shot":
                 self.draw()
                 pygame.image.save(self.screen, cmd[1])
+            elif cmd[0] == "midi":           # e.g. "midi note 38 100", "midi cc 21 64"
+                self.midi.events.append((cmd[1],) + tuple(int(x) for x in cmd[2:]))
             elif cmd[0] == "quit":
                 self.running = False
+
+    # ------------------------------------------------------------ MIDI
+    # Knobs, in the order their controller numbers sort: (pad attribute, lowest value, highest value, re-render?)
+    KNOBS = [("vol", 0.0, 1.5, False), ("pitch", -24, 24, True), ("filt", -100, 100, True), ("dsend", 0.0, 1.0, False),
+             ("rsend", 0.0, 1.0, False), ("start", 0.0, 0.98, True), ("end", 0.02, 1.0, True), ("fout", 0, 2000, True)]
+
+    def tick_midi(self):
+        """Feed the MIDI port what it needs for clock, and act on what controllers sent."""
+        e, m = self.eng, self.midi
+        m.bpm, m.playing = e.bpm, e.playing
+        m.latency = (e.queue_blocks + 1) * BLOCK / SR
+        for ev in m.poll():
+            if ev[0] == "note" and 0 <= ev[1] - midi.BASE_NOTE < NPADS:
+                pad = ev[1] - midi.BASE_NOTE
+                self.sel = pad
+                e.trigger(pad, min(1.3, max(0.3, ev[2] / 100.0)))
+                if e.pads[pad].mode == HOLD:
+                    self.midi_held[ev[1]] = pad
+            elif ev[0] == "off" and ev[1] in self.midi_held:
+                e.note_off(self.midi_held.pop(ev[1]))
+            elif ev[0] == "cc":
+                if ev[1] not in self.midi_ccs:
+                    self.midi_ccs = sorted(self.midi_ccs + [ev[1]])[:64]
+                k = self.midi_ccs.index(ev[1])
+                if k < len(self.KNOBS):
+                    attr, lo, hi, bake = self.KNOBS[k]
+                    p = e.pads[self.sel]
+                    v = lo + (hi - lo) * min(127, max(0, ev[2])) / 127.0
+                    setattr(p, attr, int(round(v)) if isinstance(lo, int) else round(v, 3))
+                    p.start, p.end = min(p.start, 0.98), max(p.end, min(1.0, p.start + 0.02))
+                    if bake and p.raw is not None:
+                        self.pending_bake = (p, time.time() + 0.15)     # wait until the knob stops turning
+            elif ev[0] == "start" and not e.playing:
+                e.play()
+            elif ev[0] == "stop" and e.playing:
+                e.stop()
 
     # ------------------------------------------------------------ main loop
     def run(self):
@@ -1788,6 +1845,7 @@ class App:
             self.flush_bake(force=False)
             self.tick_live()
             self.tick_wheel(1 / 30.0)
+            self.tick_midi()
             if self.resampling and time.time() - self.resampling[0] > 60:
                 self.finish_resample()
             self.run_script()
@@ -1797,6 +1855,7 @@ class App:
         if self.eng.render_errors:
             self.logline("render errors: %d, first:\n%s" % (self.eng.render_errors, self.eng.last_error))
         self.logline("exit: dropouts=%d peak_render=%.1fms" % (self.eng.underruns, self.eng.max_render_ms))
+        self.midi.stop()
         self.eng.shutdown()
         pygame.quit()
         return self.exit_code

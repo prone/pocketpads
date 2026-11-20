@@ -532,6 +532,7 @@ class Engine:
         self.delay, self.reverb = Delay(), Reverb()
         self.holds = {}
         self.cap = None
+        self.on_note = None              # callback(pad, velocity, semitones) for every pad that sounds
         self.perf = {"lp": False, "hp": False, "stutter": False, "tape": False}
         self.hist = np.zeros((HSIZE, 2), np.float32)
         self.hw = 0
@@ -646,7 +647,7 @@ class Engine:
         return SR * 60.0 / self.bpm / 4.0
 
     # ----- rendering (audio thread)
-    def _start_voice(self, pad, vel, off, gate=None, buf=None, manual=False):
+    def _start_voice(self, pad, vel, off, gate=None, buf=None, manual=False, note=None):
         p = self.pads[pad]
         if buf is None:
             buf = p.buf
@@ -662,6 +663,8 @@ class Engine:
             return                      # played by hand, a looping pad is a switch: the second hit turns it off
         if p.mode != HOLD:
             gate = None
+        if note is not None and self.on_note:
+            self.on_note(pad, vel, note)        # tell MIDI out; it only queues, so this is safe here
         # A voice is a plain list for speed. Fields, by index:
         #   0 buf         the pad's baked audio            6 fade offset  where in the block the fade starts
         #   1 pos         next sample to play              7 delay send
@@ -679,7 +682,7 @@ class Engine:
         while self.cmds:
             c = self.cmds.popleft()
             if c[0] == "trig":
-                self._start_voice(c[1], c[2], 0, manual=True)
+                self._start_voice(c[1], c[2], 0, manual=True, note=0)
             elif c[0] == "relall":
                 self.holds.clear()
             elif c[0] == "off":
@@ -717,7 +720,7 @@ class Engine:
             for pad in list(self.holds):
                 t = self.holds[pad]
                 while t < end:
-                    self._start_voice(pad, 1.0, max(0, int(t - self._clock)))
+                    self._start_voice(pad, 1.0, max(0, int(t - self._clock)), note=0)
                     self.pad_flash[pad] = time.time()
                     if self.playing and self.rec:
                         pat = self.patterns[self.cur_pat]
@@ -758,7 +761,7 @@ class Engine:
                         continue
                     note = pat["notes"][i][st]
                     self._start_voice(i, 1.0 if v == 1 else 1.3, off, gate=self.step_frames(),
-                                      buf=p.variants.get(note) if note else None)
+                                      buf=p.variants.get(note) if note else None, note=note)
                     self.pad_flash[i] = now
                 self.step = st
                 self._step_clock = self._next_time
