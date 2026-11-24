@@ -105,6 +105,7 @@ class App:
         self.ops = None                 # while a frame is being described: its list of drawing steps
         self.frame = []                 # the last frame shown, as [(area, steps), ...]
         self.geom = {}                  # box geometry already worked out
+        self.waves = {}                 # waveform pictures already drawn (see _wave)
         self.hint_rows = {}             # hint lines already laid out
         pygame.display.set_caption("PocketPads")
         pygame.mouse.set_visible(False)
@@ -1500,8 +1501,16 @@ class App:
         pygame.display.flip()
         self.frame = []                 # whatever was drawn, the next frame starts from scratch
 
+    def breathe(self):
+        """Stand aside while the audio thread renders a block (see Engine.gate). Called between drawing steps."""
+        gate = self.eng.gate
+        if gate.locked():
+            gate.acquire()
+            gate.release()
+
     def area(self, x, y, w, h):
         """Start a new area of the frame. An area is redrawn only when its drawing steps change."""
+        self.breathe()
         self.ops = []
         self.areas.append(((x, y, w, h), self.ops))
 
@@ -1559,14 +1568,20 @@ class App:
             self.box(x, y, w, h, DARK, LINE)
             self.text("NO SAMPLE", x + w / 2, y + h / 2, "m", DIM, "c")
             return
-        key = (id(pad.raw), x, y, w, h, trim, pad.start, pad.end)
+        # Drawing a waveform takes tens of milliseconds on a handheld, so each picture is kept: stepping
+        # from pad to pad, as when playing, then costs one copy. The entry holds on to the peaks it was
+        # drawn from, which is how a pad that has since been given another sample is told apart.
+        key = (id(pad.peaks), x, y, w, h, color, trim, pad.start, pad.end)
         rect = self.R(x, y, w, h)
-        if getattr(self, "_wave_key", None) == key:
-            self.screen.blit(self._wave_img, rect)
+        hit = self.waves.get(key)
+        if hit is not None and hit[0] is pad.peaks:
+            self.screen.blit(hit[1], rect)
             return
         self.box(x, y, w, h, DARK, LINE)
         self._draw_wave(pad, x, y, w, h, color, trim)
-        self._wave_key, self._wave_img = key, self.screen.subsurface(rect).copy()
+        if len(self.waves) >= 32:
+            self.waves.pop(next(iter(self.waves)))
+        self.waves[key] = (pad.peaks, self.screen.subsurface(rect).copy())
 
     def _draw_wave(self, pad, x, y, w, h, color, trim):
         cols = len(pad.peaks)
@@ -1574,13 +1589,15 @@ class App:
         x0 = self.ox + (x + 2) * self.u
         ww = (w - 4) * self.u
         hh = (h / 2 - 3) * self.u
+        wd = max(1, int(ww / cols) + 1)
+        fill = self.screen.fill                 # filled bars: several times quicker than wide lines
         for i in range(cols):
+            if not i & 31:
+                self.breathe()
             f = i / cols
             inside = (not trim) or (pad.start <= f < pad.end)
             a = max(1, int(pad.peaks[i] * hh))
-            px = int(x0 + f * ww)
-            pygame.draw.line(self.screen, color if inside else LINE, (px, int(mid - a)), (px, int(mid + a)),
-                             max(1, int(ww / cols) + 1))
+            fill(color if inside else LINE, (int(x0 + f * ww) - wd // 2, int(mid - a), wd, 2 * a + 1))
         if trim:
             for f, c in ((pad.start, TEAL), (pad.end, ORANGE)):
                 px = int(x0 + f * ww)
@@ -1595,25 +1612,34 @@ class App:
         finally:
             self.ops = None
         old, new = self.frame, self.areas
-        over = new[-1][1]                               # dialogs and messages lie on top of everything
+        over = new[-2][1]                               # dialogs and lists lie on top of everything
         same_layout = len(old) == len(new) and all(a[0] == b[0] for a, b in zip(old, new))
         changed = [i for i in range(len(new))] if not same_layout else [i for i in range(len(new)) if old[i][1] != new[i][1]]
         if not changed:
             return
         rects = []
-        if not same_layout or over or old[-1][1]:       # anything on top: simplest to redraw the lot
-            changed = range(len(new))
+        last = len(new) - 1                             # the message strip, drawn after everything else
+        if not same_layout or over or old[-2][1] or last in changed:
+            changed = range(len(new))                   # a dialog, or a message coming or going: redraw the lot
             self.screen.fill(BG)
             rects = None
+        elif new[last][1]:
+            # A message is showing and stays as it is. Whatever is redrawn underneath would paint over it,
+            # so it is drawn again on top, instead of redrawing the whole screen for every pad that lights up.
+            mx, my, mw, mh = new[last][0]
+            if any(x < mx + mw and mx < x + w and y < my + mh and my < y + h for (x, y, w, h), _ in (new[i] for i in changed)):
+                changed.append(last)
         for i in changed:
             (x, y, w, h), ops = new[i]
             if w:
                 clip = self.R(x, y, w, h)
                 self.screen.set_clip(clip)
-                self.screen.fill(BG, clip)
+                if i != last:                           # the message strip lies over the page: never wipe under it
+                    self.screen.fill(BG, clip)
                 if rects is not None:
                     rects.append(clip)
             for op in ops:
+                self.breathe()
                 op[0](*op[1:])
             self.screen.set_clip(None)
         self.present(rects)
@@ -1621,7 +1647,7 @@ class App:
 
     def describe(self):
         e = self.eng
-        self.area(0, 0, 640, 29)
+        self.area(0, 0, 572, 29)
         # top bar
         x = 6
         for i, name in enumerate(PAGES):
@@ -1652,7 +1678,8 @@ class App:
             self.custom(self._play_mark)
         else:
             self.box(554, 9, 12, 12, DIM, None, 1)
-        # output meter
+        # output meter, in an area of its own: it moves all the time and the rest of the bar does not
+        self.area(572, 0, 68, 29)
         self.box(578, 9, 56, 12, DARK, LINE, 2)
         lv = round(min(1.0, e.peak) * 26) / 26.0        # in steps: a meter that twitches redraws the bar
         if lv > 0.01:
@@ -1706,6 +1733,7 @@ class App:
             self.box(150, 130, 340, 90, PANEL, ORANGE, 5, 2)
             self.text(self.confirm[0], 320, 162, "m", TEXT, "c")
             self.text("A = YES     B = NO", 320, 192, "m", ORANGE, "c")
+        self.area(120, 300, 400, 24)                    # last: the message strip (see draw)
         if time.time() < self.toast_until:
             self.box(120, 300, 400, 24, ORANGE, None, 4)
             self.text(self.toast[:60], 320, 312, "m", DARK, "c")
@@ -1762,10 +1790,10 @@ class App:
         now = time.time()
         drum = 0 if "l2" in self.held else (8 if "r2" in self.held else None)
         first = self.base()
-        self.area(0, 29, 314, 301)
         for i, p in enumerate(self.bank_pads(), first):
             r, c = divmod(i - first, 4)
             x, y = 8 + c * 75, 34 + r * 75
+            self.area(x, y, 71, 71)                     # an area per pad: a hit redraws one pad, not sixteen
             glow = round(min(1.0, max(0.0, 1.0 - (now - e.pad_flash[i]) / 0.18)) * 3) / 3.0   # four steps; safe if the clock jumps
             base = PANEL if p.buf is not None else DARK
             fill = mix(base, TEAL, glow)
@@ -1780,7 +1808,7 @@ class App:
                 self.box(x + 22, y + 22, 28, 22, ORANGE, None, 4)
                 self.text(DRUM_GLYPH.get(k, k), x + 36, y + 33, "m", DARK, "c")
         p = e.pads[self.sel]
-        self.area(314, 29, 326, 301)                    # the right half rarely changes while the pads flash
+        self.area(314, 29, 326, 163)                    # the selected pad: changes when the selection moves
         self.box(318, 34, 314, 296, PANEL, LINE, 6)
         self.text("PAD %d" % (self.sel + 1), 330, 52, "l", ORANGE)
         self.text(p.name[:12], 540, 53, "m", TEXT, "r")
@@ -1794,6 +1822,8 @@ class App:
             self.text("NOTE REPEAT %s" % RATES[e.repeat_div][0], 389, 183, "s", DARK, "c")
         if p.choke:
             self.text("CHOKE %d" % p.choke, 620, 183, "s", DIM, "r")
+        self.area(314, 192, 326, 138)                   # the help text: never changes
+        self.box(318, 34, 314, 296, PANEL, LINE, 6)
         lines = ["A  play pad          B  mute pad",
                  "X  record on/off     Y  sound + samples",
                  "Hold L2 or R2: buttons play 8 pads each",

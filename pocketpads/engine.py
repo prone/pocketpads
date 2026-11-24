@@ -582,6 +582,10 @@ class Engine:
         self.running = False
         self.sdl = self.dev = None
         self.queue_blocks = 3
+        # Held by the audio thread while it renders a block. The screen code waits on it between
+        # drawing steps (see breathe in main.py), so a block is rendered without the two threads
+        # fighting over the interpreter, which on a handheld made blocks late and the sound crackle.
+        self.gate = threading.Lock()
         self.underruns = 0
         self.render_errors, self.last_error = 0, ""
         self.max_render_ms = 0.0
@@ -1081,14 +1085,15 @@ class Engine:
                 if queued == 0 and started:
                     self.underruns += 1
                 t0 = time.perf_counter()
-                try:
-                    pcm = self.render_pcm(BLOCK)
-                except Exception:           # one bad block must not silence the app for good
-                    self.render_errors += 1
-                    if self.render_errors == 1:
-                        self.last_error = traceback.format_exc()
-                    self.voices = []
-                    pcm = np.zeros((BLOCK, 2), np.int16)
+                with self.gate:
+                    try:
+                        pcm = self.render_pcm(BLOCK)
+                    except Exception:       # one bad block must not silence the app for good
+                        self.render_errors += 1
+                        if self.render_errors == 1:
+                            self.last_error = traceback.format_exc()
+                        self.voices = []
+                        pcm = np.zeros((BLOCK, 2), np.int16)
                 self.max_render_ms = max(self.max_render_ms, (time.perf_counter() - t0) * 1000)
                 self.sdl.SDL_QueueAudio(self.dev, pcm.ctypes.data, pcm.nbytes)
                 started = True
