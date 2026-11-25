@@ -19,7 +19,7 @@ import pygame
 import kit
 import midi
 import styles
-from engine import (APP_DIR, BANK, BLOCK, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NAME_CHARS, NAME_MAX, NBANKS, NPADS, NPAT,
+from engine import (APP_DIR, BANK, BLOCK, CHORD_MAX_SECONDS, CHORDS, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NAME_CHARS, NAME_MAX, NBANKS, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine, clean_name,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
@@ -53,6 +53,7 @@ def find_grainbrick():
 
 GB_DIR = find_grainbrick()
 SLOTS = 16
+KEY_CHORDS_MAX_SECONDS = 6           # KEY CHORDS bakes sixteen chords at once, so it takes shorter sounds than one CHORD
 
 BG, PANEL, LINE = (17, 18, 23), (30, 32, 40), (72, 76, 90)
 TEXT, DIM = (228, 229, 235), (128, 132, 148)
@@ -136,6 +137,7 @@ class App:
         self.live = None       # live chop in progress
         self.resampling = None
         self.chop_mode, self.fit_idx = 0, 2
+        self.key_idx = 0       # KEY CHORDS: major or minor
         self.fit_keep = False  # FIT TO TEMPO: True stretches (pitch kept), False repitches
         self.select_alone = False
         self.audition = None   # (pad, start time) while the SOUND page is playing a pad
@@ -512,6 +514,66 @@ class App:
             self.say("LOADED %s" % self.slot_label(self.slot))
         return True
 
+    def free_slot(self):
+        """The first slot with no project in it, or None."""
+        for n in range(1, SLOTS + 1):
+            if n != self.loaded and not os.path.exists(self.slot_path(n)):
+                return n
+        return None
+
+    def save_copy(self):
+        """SAVE A COPY: save the open project as it was last saved, then carry on in a copy in the first empty slot."""
+        new, old = self.free_slot(), self.loaded
+        if new is None:
+            self.say("ALL %d SLOTS ARE USED - NO ROOM FOR A COPY" % SLOTS, 4)
+            return
+
+        def go():
+            self.slot = new
+            self.save_project(quiet=True)
+            if self.loaded != new:          # the save failed (it has said so): stay where we were
+                self.slot = old
+            elif os.path.exists(self.slot_path(old)):
+                self.say("COPY SAVED AS P%02d. YOU ARE NOW IN P%02d (P%02d IS KEPT)" % (new, new, old), 4.5)
+            else:                           # the old slot had never been saved, so there is nothing kept in it
+                self.say("SAVED AS P%02d. YOU ARE NOW IN P%02d" % (new, new), 4)
+        self.confirm = ("SAVE A COPY AS P%02d AND SWITCH TO IT?" % new, go)
+
+    def ask_open(self):
+        """OPEN: a list of the saved projects."""
+        items = [("%s%s" % (self.slot_label(n), "   (open now)" if n == self.loaded else ""), n)
+                 for n in range(1, SLOTS + 1) if n == self.loaded or os.path.exists(self.slot_path(n))]
+        if len(items) < 2:
+            self.say("NO OTHER SAVED PROJECTS YET", 3)
+            return
+
+        def chosen(n):
+            if n == self.loaded:
+                self.say("%s IS ALREADY OPEN" % self.slot_label(n), 3)
+                return
+
+            def go():
+                # Check the file reads before letting go of the open project: a damaged one is set aside
+                # and nothing else changes.
+                path = self.slot_path(n)
+                try:
+                    with open(path) as f:
+                        if not isinstance(json.load(f), dict):
+                            raise ValueError("not a project")
+                except (OSError, ValueError) as err:
+                    self.logline("open failed: %s: %s" % (path, err))
+                    try:
+                        os.replace(path, path + ".damaged")
+                    except OSError:
+                        pass
+                    self.say("P%02d IS DAMAGED - KEPT AS .damaged. STILL IN P%02d" % (n, self.loaded), 5)
+                    return
+                self.slot = n
+                self.load_project()
+            self.confirm = ("OPEN %s?\nUNSAVED CHANGES TO P%02d ARE LOST" % (self.slot_label(n), self.loaded), go)
+        self.picker = {"title": "OPEN A PROJECT", "items": items, "idx": 0, "fn": chosen,
+                       "hint": "A open    B cancel    save first if you want to keep your changes"}
+
     def ask_new_project(self):
         """NEW: pick the starter kit or a style, then start it in the first empty slot."""
         items = [("STARTER KIT   drums and bass with a demo beat", "")]
@@ -873,8 +935,17 @@ class App:
         else:
             self.hints("up down choose   left right change   A confirm   SELECT+L1 R1 pattern")
 
-    SOUND_ROWS = ["WAVEFORM", "SAMPLE", "VOLUME", "PITCH", "FINE TUNE", "STRETCH", "FILTER", "BIT CRUSH", "LO-FI RATE", "START", "END", "MODE", "REVERSE", "FADE IN",
-                  "FADE OUT", "DELAY", "REVERB", "CHOKE", "CHOP", "FIT STYLE", "FIT TO TEMPO", "SPREAD"]
+    SOUND_ROWS = ["WAVEFORM", "SAMPLE", "VOLUME", "PITCH", "FINE TUNE", "CHORD", "STRETCH", "FILTER", "BIT CRUSH", "LO-FI RATE", "START", "END", "MODE", "REVERSE", "FADE IN",
+                  "FADE OUT", "DELAY", "REVERB", "CHOKE", "CHOP", "FIT STYLE", "FIT TO TEMPO", "SPREAD", "KEY CHORDS"]
+    # KEY CHORDS: the chords of a key, one per pad. Each entry is (name, semitones above the key note, chord name).
+    KEYS = [("MAJOR KEY", [("I", 0, "MAJOR"), ("II m", 2, "MINOR"), ("III m", 4, "MINOR"), ("IV", 5, "MAJOR"),
+                           ("V", 7, "MAJOR"), ("VI m", 9, "MINOR"), ("VII dim", 11, "DIM"), ("I high", 12, "MAJOR"),
+                           ("I maj7", 0, "MAJOR 7"), ("II m7", 2, "MINOR 7"), ("III m7", 4, "MINOR 7"), ("IV maj7", 5, "MAJOR 7"),
+                           ("V 7", 7, "7TH"), ("VI m7", 9, "MINOR 7"), ("V sus4", 7, "SUS 4"), ("I sus2", 0, "SUS 2")]),
+            ("MINOR KEY", [("I m", 0, "MINOR"), ("II dim", 2, "DIM"), ("III", 3, "MAJOR"), ("IV m", 5, "MINOR"),
+                           ("V m", 7, "MINOR"), ("VI", 8, "MAJOR"), ("VII", 10, "MAJOR"), ("I m high", 12, "MINOR"),
+                           ("I m7", 0, "MINOR 7"), ("III maj7", 3, "MAJOR 7"), ("IV m7", 5, "MINOR 7"), ("V m7", 7, "MINOR 7"),
+                           ("VI maj7", 8, "MAJOR 7"), ("VII 7", 10, "7TH"), ("V 7", 7, "7TH"), ("I sus4", 0, "SUS 4")])]
     CHOPS = [("AT HITS", 0), ("4 EQUAL", 4), ("8 EQUAL", 8), ("16 EQUAL", 16), ("LIVE: TAP AS IT PLAYS", -1)]
 
     def press_sound(self, b, sel):
@@ -906,6 +977,13 @@ class App:
             elif row == "FINE TUNE":
                 p.fine = int(min(50, max(-50, p.fine + d)))
                 self.rebake(p)
+            elif row == "CHORD":
+                p.chord = (p.chord + (1 if d > 0 else -1)) % len(CHORDS)
+                if p.chord and p.raw is not None and not p.chord_fits():
+                    self.say("TOO LONG FOR A CHORD (%d s MAX) - TRIM OR CHOP IT" % CHORD_MAX_SECONDS, 3.5)
+                self.rebake(p)
+            elif row == "KEY CHORDS":
+                self.key_idx = (self.key_idx + (1 if d > 0 else -1)) % len(self.KEYS)
             elif row == "MODE":
                 p.mode = (p.mode + (1 if d > 0 else -1)) % len(MODES)
             elif row == "REVERSE":
@@ -952,7 +1030,7 @@ class App:
             row = self.SOUND_ROWS[self.sound_row]
             if row == "SAMPLE":
                 self.open_browser()
-            elif row in ("CHOP", "FIT TO TEMPO", "SPREAD") and p.raw is None:
+            elif row in ("CHOP", "FIT TO TEMPO", "SPREAD", "KEY CHORDS") and p.raw is None:
                 self.say("THIS PAD HAS NO SAMPLE")
             elif row == "CHOP":
                 self.start_chop()
@@ -962,6 +1040,13 @@ class App:
                 self.say("TOO LONG TO SPREAD (%d s MAX) - TRIM OR CHOP IT" % SPREAD_MAX_SECONDS, 3.5)
             elif row == "SPREAD":
                 self.confirm = ("SPREAD PAD %d ACROSS PADS %d-%d?" % (self.sel + 1, self.base() + 1, self.base() + BANK), self.spread)
+            elif row == "KEY CHORDS" and abs(p.stretch - 100) > 0.05:
+                self.say("SET STRETCH TO OFF FIRST - 16 STRETCHED CHORDS TAKE TOO LONG", 4)
+            elif row == "KEY CHORDS" and p.baked_seconds(self.key_root(p)) > KEY_CHORDS_MAX_SECONDS:
+                self.say("TOO LONG FOR 16 CHORDS (%d s MAX) - TRIM OR CHOP IT" % KEY_CHORDS_MAX_SECONDS, 3.5)
+            elif row == "KEY CHORDS":
+                self.confirm = ("%s CHORDS ON PADS %d-%d?" % (self.KEYS[self.key_idx][0], self.base() + 1, self.base() + BANK),
+                                self.key_chords)
             else:
                 self.toggle_audition()
         elif b == "X":
@@ -1067,6 +1152,40 @@ class App:
         self.page = PAGES.index("PLAY")
         self.say("PAD %d SPREAD ACROSS PADS %d-%d" % (self.sel + 1, self.base() + 1, self.base() + BANK), 2.5)
 
+    @staticmethod
+    def key_root(pad):
+        """The key note for KEY CHORDS: the pad's pitch, an octave or two down if the top chord would be out of range."""
+        root = pad.pitch
+        while root + 12 > 24:
+            root -= 12
+        return root
+
+    def key_chords(self):
+        """This pad's sound as the sixteen chords of a key, one per pad of its bank. The pad's own pitch is the key note."""
+        src = self.eng.pads[self.sel]
+        if src.raw is None:
+            self.say("THIS PAD HAS NO SAMPLE")
+            return
+        self.flush_bake()
+        key, chords = self.KEYS[self.key_idx]
+        names = [c[0] for c in CHORDS]
+        raw, peaks, path, root = src.raw, src.peaks, src.path, self.key_root(src)
+        self.say("MAKING 16 CHORDS ...", 2)
+        self.draw()                         # sixteen bakes take a moment on the handheld: say so first
+        keep = type(src)(0)                 # the source pad is one of the sixteen, so copy its settings first
+        keep.copy_settings(src)
+        for q, (label, semis, chord) in zip(self.bank_pads(), chords):
+            self.eng.note_off(q.index)
+            q.clear()
+            q.raw, q.peaks, q.path = raw, peaks, path
+            q.copy_settings(keep)
+            q.pitch, q.chord, q.name = int(root + semis), names.index(chord), label
+            q.bake()
+            self.breathe()
+        prune_cache(self.eng.pads)
+        self.sel, self.page = self.base(), PAGES.index("PLAY")
+        self.say("CHORDS OF A %s ON PADS %d-%d" % (key, self.base() + 1, self.base() + BANK), 3)
+
     def export_audio(self):
         """Render the song (or four loops of the current pattern) to samples/exports/ as a WAV file."""
         e = self.eng
@@ -1145,7 +1264,7 @@ class App:
         because rendering them takes long enough to make the controls stutter."""
         if self.pending_bake and self.pending_bake[0] is not p:
             self.flush_bake()               # another pad is still waiting: do it now, or it would be forgotten
-        slow = abs(p.stretch - 100) > 0.05 or p.notes_wanted       # stretching and step-note copies take time
+        slow = abs(p.stretch - 100) > 0.05 or p.notes_wanted or p.chord    # stretching, chords and step-note copies take time
         if p.region_seconds() > LONG_SAMPLE_SECONDS or slow:
             self.pending_bake = (p, time.time() + 0.2)
         else:
@@ -1223,7 +1342,7 @@ class App:
                 axis = self.STICK_ROWS[row]
                 self.stick_fx[axis] = names[(names.index(self.stick_fx[axis]) + d) % len(names)]
 
-    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "PROJECT", "NAME", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES"]
+    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "SAVE", "SAVE A COPY", "NAME", "OPEN", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES"]
                  + (["IMPORT CHOPS", "GRAINBRICK"] if GB_DIR else []) + ["QUIT"])
 
     def press_proj(self, b, sel):
@@ -1236,9 +1355,7 @@ class App:
         elif b in ("left", "right"):
             d = 1 if b == "right" else -1
             big = 5 if "Y" in self.held else 1
-            if row == "PROJECT":
-                self.slot = (self.slot - 1 + d) % SLOTS + 1
-            elif row == "TEMPO":
+            if row == "TEMPO":
                 e.bpm = float(min(300, max(40, round(e.bpm) + d * big)))
             elif row == "SWING":
                 e.swing = float(min(75, max(50, round(e.swing) + d * big)))
@@ -1247,13 +1364,12 @@ class App:
             elif row == "MASTER":
                 e.master = round(min(1.5, max(0.0, e.master + 0.05 * d)), 2)
         elif b == "A":
-            if row == "SAVE":
-                if os.path.exists(self.slot_path()):
-                    self.confirm = ("OVERWRITE %s?" % self.slot_label(self.slot), self.save_project)
-                else:
-                    self.save_project()
-            elif row == "LOAD":
-                self.confirm = ("LOAD P%02d? UNSAVED CHANGES ARE LOST" % self.slot, self.load_project)
+            if row == "SAVE":                   # always the open project, into its own slot
+                self.save_project(autosave=True)
+            elif row == "SAVE A COPY":
+                self.save_copy()
+            elif row == "OPEN":
+                self.ask_open()
             elif row == "NAME":
                 self.start_naming()
             elif row == "NEW":
@@ -1789,7 +1905,7 @@ class App:
         # Drawing a waveform takes tens of milliseconds on a handheld, so each picture is kept: stepping
         # from pad to pad, as when playing, then costs one copy. The entry holds on to the peaks it was
         # drawn from, which is how a pad that has since been given another sample is told apart.
-        key = (id(pad.peaks), x, y, w, h, color, trim, pad.start, pad.end)
+        key = (id(pad.peaks), w, h, color, trim, pad.start, pad.end)     # not where it is drawn: pads often share a sound
         rect = self.R(x, y, w, h)
         hit = self.waves.get(key)
         if hit is not None and hit[0] is pad.peaks:
@@ -1963,9 +2079,15 @@ class App:
                     self.text("SPACE" if ch == " " else ch, x + 18, y + 15, "s" if ch == " " else "l", DARK if on else TEXT, "c")
             self.text("A add letter    X delete    START done    B cancel", 320, 292, "h", mix(DIM, TEXT, 0.6), "c")
         if self.confirm:
+            lines = self.confirm[0].split("\n")
+            if len(lines) == 1 and len(lines[0]) > 44 and "? " in lines[0]:      # too wide for the box: break after the question
+                lines = [lines[0][:lines[0].index("? ") + 1], lines[0][lines[0].index("? ") + 2:]]
+            if len(lines) == 1 and len(lines[0]) > 44 and ". " in lines[0]:
+                lines = [lines[0][:lines[0].index(". ") + 1], lines[0][lines[0].index(". ") + 2:]]
             self.box(150, 130, 340, 90, PANEL, ORANGE, 5, 2)
-            self.text(self.confirm[0], 320, 162, "m", TEXT, "c")
-            self.text("A = YES     B = NO", 320, 192, "m", ORANGE, "c")
+            for i, line in enumerate(lines[:2]):
+                self.text(line, 320, 162 + (i - (len(lines[:2]) - 1) / 2) * 20, "m", TEXT, "c")
+            self.text("A = YES     B = NO", 320, 198 if len(lines) > 1 else 192, "m", ORANGE, "c")
         self.area(120, 300, 400, 24)                    # last: the message strip (see draw)
         if time.time() < self.toast_until:
             self.box(120, 300, 400, 24, ORANGE, None, 4)
@@ -2117,13 +2239,22 @@ class App:
                              None, 2)
         if self.beat_name:
             self.box(3, gy + (self.sel - first) * rh - 1, 90, rh, None, ORANGE, 3, 2)
-            self.hints("A pick a new sound for this pad   up down pad   right back to the steps   B mute   X solo   "
-                       "L stick tempo   R stick volume   SELECT+Y bank   SELECT+A clear track")
+            # The pad's sound, shown over the steps: under the row in the top half of the grid, above it in the bottom half.
+            p, r = e.pads[self.sel], self.sel - first
+            py = gy + (r + 1) * rh + 3 if r < 8 else gy + r * rh - 85
+            self.box(gx - 2, py, 538, 80, PANEL, ORANGE, 5, 2)
+            self.text("PAD %d  %s" % (self.sel + 1, p.name[:20]), gx + 8, py + 13, "m", ORANGE)
+            if p.raw is None:
+                self.text("EMPTY  -  press A to pick a sound", gx + 268, py + 48, "m", DIM, "c")
+            else:
+                self.text("VOL %d    PITCH %+d    %.2fs" % (round(p.vol * 100), p.pitch, p.seconds()), gx + 526, py + 13, "m", TEXT, "r")
+                self.wave(p, gx + 4, py + 24, 526, 52, TEAL, trim=p.start > 0 or p.end < 1)
+            self.hints("A pick a new sound for this pad   up down pad   SELECT+Y next 16 pads   right back to the steps   "
+                       "B mute   X solo   L stick tempo   R stick volume   SELECT+A clear track")
             return
         self.box(gx + (self.cur_step - view) * cw, gy + (self.sel - first) * rh - 1, cw - 2, rh - 1, None, ORANGE, 3, 2)
-        self.hints("A step (hold to paint)   Y accent   B mute   X solo   L2 R2 jump   left past step 1: change sound   "
-                   "L stick tempo   R stick volume   SELECT+left right note   SELECT+L2 R2 octave   SELECT+Y bank   "
-                   "SELECT+A clear track   SELECT+X clear all")
+        self.hints("up down pad   SELECT+Y next 16 pads   A step (hold: paint)   Y accent   B mute   X solo   "
+                   "L2 R2 jump   left of step 1: sound   sticks: tempo, volume   SELECT+left right note   SELECT+A / X clear")
 
     def draw_sound(self):
         e = self.eng
@@ -2145,6 +2276,9 @@ class App:
                 "DELAY": "send %d" % round(p.dsend * 100), "REVERB": "send %d" % round(p.rsend * 100),
                 "CHOKE": "group %d  (pads in a group cut each other)" % p.choke if p.choke else "OFF",
                 "FINE TUNE": "%+d cents" % p.fine,
+                "CHORD": CHORDS[p.chord][0] if not p.chord else "%s  (%s)" % (
+                    CHORDS[p.chord][0], "one hit plays the chord" if p.raw is None or p.chord_fits() else "too long - not applied"),
+                "KEY CHORDS": "%s  -  A puts its chords on the 16 pads" % self.KEYS[self.key_idx][0],
                 "BIT CRUSH": "%d bit" % CRUSH_BITS[p.crush] if p.crush else "OFF",
                 "LO-FI RATE": "%.1f kHz" % (SR / 1000.0 / CRUSH_RATES[p.down]) if p.down else "OFF",
                 "STRETCH": "OFF" if abs(p.stretch - 100) < 0.05 else "%.4g%%, same pitch" % round(p.stretch, 1),
@@ -2238,11 +2372,12 @@ class App:
 
     def draw_proj(self):
         e = self.eng
-        exists = os.path.exists(self.slot_path())
-        here = "  - open now" if self.slot == self.loaded else ""
-        vals = {"PROJECT": "%s  %s%s" % (self.slot_label(self.slot), "(saved)" if exists else "(empty)", here),
+        free = self.free_slot()
+        saved = sum(os.path.exists(self.slot_path(n)) for n in range(1, SLOTS + 1) if n != self.loaded)
+        vals = {"SAVE": "%s  -  A saves it" % self.slot_label(self.loaded),
+                "SAVE A COPY": "as a new project in P%02d" % free if free else "no empty slot left",
+                "OPEN": "another project  (%d saved)" % saved if saved else "no other projects yet",
                 "NAME": ("%s  -  A to rename P%02d" % (e.name, self.loaded)) if e.name else "none  -  A to name P%02d" % self.loaded,
-                "SAVE": "save to P%02d" % self.slot, "LOAD": "load P%02d" % self.slot,
                 "NEW": "starter kit, or a style with a full song", "TEMPO": "%d BPM" % round(e.bpm),
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
                 "MIDI OUT": ("channel %d  -  pads send notes, plus clock" % self.midi.out_channel) if self.midi.out_channel

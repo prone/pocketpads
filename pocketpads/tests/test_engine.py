@@ -107,4 +107,24 @@ e3 = Engine(); e3.load(f); assert e3.name == "NIGHT DRIVE"
 e3.from_dict({"bpm": 100}); assert e3.name == ""
 e3.from_dict({"name": "x" * 40 + '"'}); assert e3.name == "X" * 14
 print("project name kept:", e.name)
+# chords: a pad set to a chord plays the root with the added notes under it, about as loud, and the setting is saved
+c = k.pads[0]; one = c.buf.copy(); c.chord = 1; c.bake()
+ref = one.copy()
+for semis in _e.CHORDS[1][1]:
+    v = _e.resample(one, 2 ** (semis / 12)); m = min(len(v), len(ref)); ref[:m] += _e.CHORD_UPPER * v[:m]
+assert float((ref * c.buf).sum() / _np.sqrt((ref ** 2).sum() * (c.buf ** 2).sum())) > 0.98
+assert len(c.buf) == len(one) and _np.abs(c.buf).max() <= 1.26 * _np.abs(one).max()
+d = k.to_dict(); assert d["pads"][0]["chord"] == 1
+k2 = _e.Engine(); k2.from_dict(d); assert k2.pads[0].chord == 1
+del d["pads"][0]["chord"]; k2.from_dict(d); assert k2.pads[0].chord == 0      # older projects have no chord
+c.chord = 0; c.bake(); assert _np.allclose(c.buf, one)
+# a chord on a sound too long once pitched down is left alone, and the pad says so
+assert c.chord_fits() and c.baked_seconds(-12) > c.baked_seconds() * 1.99
+# with every voice in use, one more fades the oldest instead of cutting it dead
+k.stop(); k.voices.clear()
+for _ in range(_e.MAX_VOICES + 1): k._start_voice(0, 0.5, 0, manual=False)
+assert len(k.voices) == _e.MAX_VOICES + 1 and k.voices[0][5]
+for _ in range(4): k.render(BLOCK)
+assert len(k.voices) <= _e.MAX_VOICES
+print("chords: mixed under the root, level held, saved and loaded")
 print("ALL OK")

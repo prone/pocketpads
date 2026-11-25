@@ -27,6 +27,7 @@ fin/fout (fade in/out) in milliseconds, start/end as fractions of the file, send
 import ctypes
 import glob
 import json
+import math
 import os
 import re
 import struct
@@ -67,6 +68,13 @@ CRUSH_RATES = [1, 2, 4, 8, 16]               # divide the sample rate by this (1
 COMP_RATIO = 4.0
 ONESHOT, HOLD, LOOP = 0, 1, 2
 MODES = ["ONE-SHOT", "HOLD", "LOOP"]
+# A pad can play its sound as a chord: these are the notes added above the root, in semitones.
+# Projects store the position in this list, so add new chords at the end.
+CHORDS = [("OFF", ()), ("MAJOR", (4, 7)), ("MINOR", (3, 7)), ("7TH", (4, 7, 10)), ("MAJOR 7", (4, 7, 11)),
+          ("MINOR 7", (3, 7, 10)), ("SUS 2", (2, 7)), ("SUS 4", (5, 7)), ("DIM", (3, 6)), ("POWER", (7, 12)),
+          ("OCTAVE", (12,))]
+CHORD_UPPER = 0.7                    # the added notes sit a little under the root
+CHORD_MAX_SECONDS = 20               # longer sounds are left as single notes (each chord note is rendered whole)
 FITS = [("1 BEAT", 1), ("2 BEATS", 2), ("1 BAR", 4), ("2 BARS", 8), ("4 BARS", 16)]
 EXPORT_MAX_SECONDS = 300             # longest export; about 100 MB of audio in memory while it is written
 MAX_CAPTURE_BLOCKS = 60 * 44100 // 512      # resampling stops collecting after a minute
@@ -447,15 +455,25 @@ class Pad:
         self.fine, self.mode, self.rev, self.fin, self.fout = 0, 0, False, 0, 0
         self.stretch = 100.0             # length in percent, pitch unchanged
         self.crush, self.down = 0, 0     # lo-fi: indexes into CRUSH_BITS and CRUSH_RATES
+        self.chord = 0                   # index into CHORDS; 0 plays the sound as it is
         self.mute = self.solo = False
 
     def copy_settings(self, other):
-        for k in ("vol", "pitch", "fine", "start", "end", "filt", "dsend", "rsend", "choke", "mode", "rev", "fin", "fout", "stretch", "crush", "down"):
+        for k in ("vol", "pitch", "fine", "start", "end", "filt", "dsend", "rsend", "choke", "mode", "rev", "fin", "fout", "stretch", "crush", "down", "chord"):
             setattr(self, k, getattr(other, k))
 
     def region_seconds(self):
         """Length of the trimmed sample at its original pitch, before any stretch."""
         return 0.0 if self.raw is None else (self.end - self.start) * len(self.raw) / SR
+
+    def baked_seconds(self, pitch=None):
+        """How long the playable sound is (or would be at another pitch), after stretch and pitch."""
+        semis = (self.pitch if pitch is None else pitch) + self.fine / 100.0
+        return self.region_seconds() * (self.stretch / 100.0) / 2.0 ** (semis / 12.0)
+
+    def chord_fits(self):
+        """False when the sound is too long to be made into a chord (it then plays as a single note)."""
+        return self.baked_seconds() <= CHORD_MAX_SECONDS
 
     def load(self, path):
         self.raw, self.peaks = load_cached(path)
@@ -482,6 +500,24 @@ class Pad:
             seg = time_stretch(seg, factor)
         if self.pitch or self.fine:
             seg = resample(seg, ratio)
+        notes = CHORDS[self.chord][1]
+        if notes and len(seg) <= CHORD_MAX_SECONDS * SR:
+            # A chord: the sound once more for each added note, a little quieter, on top of the root. The level
+            # is then brought back so a chord is about as loud as the single note and does not hit the limiter.
+            peak = float(np.abs(seg).max()) if len(seg) else 0.0
+            out = seg.astype(np.float32, copy=True)
+            for semis in notes:
+                v = resample(seg, 2.0 ** (semis / 12.0))
+                m = min(len(v), len(out))
+                fo = min(441, m // 2)       # a higher note is shorter than the root: fade its end, or it clicks
+                if fo:
+                    v[m - fo:m] *= np.linspace(1, 0, fo, dtype=np.float32)[:, None]
+                out[:m] += CHORD_UPPER * v[:m]
+            out *= 1.0 / math.sqrt(1.0 + CHORD_UPPER * CHORD_UPPER * len(notes))
+            top = float(np.abs(out).max()) if len(out) else 0.0
+            if peak > 0 and top > 1.25 * peak:
+                out *= 1.25 * peak / top
+            seg = out
         seg = fft_filter(seg, self.filt / 100.0) if self.filt else seg.copy()
         k = CRUSH_RATES[self.down]
         if k > 1:                        # hold every k-th sample: the stepped, aliased sound of a low sample rate
@@ -720,7 +756,14 @@ class Engine:
         self.voices.append([buf, 0, p.vol * vel, pad, off, False, 0, p.dsend, p.rsend,
                             p.mode == LOOP and own, gate, 0])
         if len(self.voices) > MAX_VOICES:
-            self.voices.pop(0)
+            # Too many at once: fade the oldest out rather than cutting it dead, which clicks. A fading voice
+            # lasts a few milliseconds more, so the list may run a little over for one block.
+            for v in self.voices:
+                if not v[5]:
+                    v[5], v[6] = True, off
+                    break
+            if len(self.voices) > MAX_VOICES + 16:
+                self.voices.pop(0)
 
     def render(self, n):
         out = np.zeros((n, 2), np.float32)
@@ -1171,7 +1214,7 @@ class Engine:
             "pads": [{"path": _rel(p.path) if p.path else "", "vol": p.vol, "pitch": p.pitch,
                       "start": p.start, "end": p.end, "mute": p.mute, "name": p.name,
                       "filt": p.filt, "dsend": p.dsend, "rsend": p.rsend, "choke": p.choke,
-                      "fine": p.fine, "stretch": p.stretch, "crush": p.crush, "down": p.down, "mode": p.mode, "rev": p.rev, "fin": p.fin, "fout": p.fout}
+                      "fine": p.fine, "stretch": p.stretch, "crush": p.crush, "down": p.down, "chord": p.chord, "mode": p.mode, "rev": p.rev, "fin": p.fin, "fout": p.fout}
                      for p in self.pads],
         }
 
@@ -1226,6 +1269,7 @@ class Engine:
             p.fine = int(min(50, max(-50, s.get("fine", 0))))
             p.stretch = float(min(STRETCH_MAX, max(STRETCH_MIN, s.get("stretch", 100.0))))
             p.crush = int(s.get("crush", 0)) % len(CRUSH_BITS)
+            p.chord = int(s.get("chord", 0)) % len(CHORDS)
             p.down = int(s.get("down", 0)) % len(CRUSH_RATES)
             p.mode = int(s.get("mode", 0)) % len(MODES)
             p.rev = bool(s.get("rev", False))

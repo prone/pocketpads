@@ -439,14 +439,19 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   </article>
 
   <article class="tut" id="t-melody">
-    <div class="tut-head"><div class="tut-num">10</div><div><h3>Play one sound as a melody</h3><p>Spread a single sound across sixteen pads, a semitone apart, and play it like a keyboard.</p></div></div>
+    <div class="tut-head"><div class="tut-num">10</div><div><h3>Play one sound as a melody</h3><p>Spread a single sound across sixteen pads, a semitone apart, and play it like a keyboard. Or turn it into chords.</p></div></div>
     <div class="tut-body solo">
       <ol class="steps">
         <li>Switch to an empty bank with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd>, because this fills all sixteen pads of the bank.</li>
         <li>Load a short, pitched sound onto one pad: a bass note, a bell, a vocal stab. The pad you choose becomes the root note. Pad 1 gives you fifteen notes above it; a pad in the middle gives notes above and below.</li>
         <li>On the SOUND page go to the last row, <span class="row">SPREAD</span>, press <kbd class="face">A</kbd> and confirm.</li>
         <li>Every pad in the bank now plays the same sound one semitone higher than the pad before it. Play them on the PLAY page with <kbd>L2</kbd> and <kbd>R2</kbd> held, or from a MIDI controller.</li>
-        <li>Each pad is still its own pad, so chords are just several pads at once, and each can be drawn into the pattern.</li>
+        <li>Each pad is still its own pad, so each can be drawn into the pattern.</li>
+      </ol>
+      <h4>Chords</h4>
+      <ol class="steps">
+        <li><b>One pad as a chord.</b> On the SOUND page set the <span class="row">CHORD</span> row to major, minor, 7th or one of the others. One hit now plays the whole chord. On the BEAT page, step notes (<kbd>SELECT</kbd>+<kbd>LEFT</kbd> or <kbd>RIGHT</kbd>) move that chord up and down, so one row can play a progression.</li>
+        <li><b>The chords of a key across the pads.</b> Go to the last row, <span class="row">KEY CHORDS</span>, choose MAJOR KEY or MINOR KEY with left and right, press <kbd class="face">A</kbd> and confirm. The bank's sixteen pads become the chords of that key, named by their place in it (I, IV, V, VI m and so on): the seven plain chords first, then 7ths and suspended chords. The pad's own pitch is the key note, so set <span class="row">PITCH</span> first to change key. It works on sounds up to 6 seconds, with <span class="row">STRETCH</span> off.</li>
       </ol>
     </div>
     <div class="tip"><p><b>Spread or step notes?</b> Spread gives you sixteen pads to play by hand. Step notes (<a href="#t-bass">tutorial 4</a>) keep the sound on one pad and one row. Spread works on sounds up to 20 seconds.</p></div>
@@ -548,19 +553,19 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <table>
           <thead><tr><th>To</th><th>Do this on the PROJ page</th></tr></thead>
           <tbody>
-            <tr><td>Save</td><td><span class="row">SAVE</span>, then <kbd class="face">A</kbd>. It saves to the slot the <span class="row">PROJECT</span> row shows, and asks before replacing another project.</td></tr>
-            <tr><td>Open another project</td><td>Left and right on <span class="row">PROJECT</span> to choose the slot, then <span class="row">LOAD</span>. Save first: loading drops unsaved changes.</td></tr>
+            <tr><td>Save</td><td><span class="row">SAVE</span>, then <kbd class="face">A</kbd>. It always saves the project you have open, into its own slot; the row shows which one.</td></tr>
+            <tr><td>Open another project</td><td><span class="row">OPEN</span>, then <kbd class="face">A</kbd>, and pick from the list of saved projects. Save first: opening another project drops unsaved changes.</td></tr>
             <tr><td>Start a new one</td><td><span class="row">NEW</span>. The open project is saved and the new one takes the next empty slot.</td></tr>
             <tr><td>Name it</td><td><span class="row">NAME</span>, then <kbd class="face">A</kbd>. Move over the letters; <kbd class="face">A</kbd> adds one, <kbd class="face">X</kbd> deletes, <kbd>START</kbd> finishes, <kbd class="face">B</kbd> cancels. Up to fourteen characters.</td></tr>
-            <tr><td>Make a copy</td><td>Choose an empty slot on <span class="row">PROJECT</span>, then <span class="row">SAVE</span>. Use this before a big change you may regret.</td></tr>
-            <tr><td>See what is in a slot</td><td>Move along <span class="row">PROJECT</span>: each slot shows its name, or "empty".</td></tr>
+            <tr><td>Make a copy</td><td><span class="row">SAVE A COPY</span>, then <kbd class="face">A</kbd>. The copy goes in the first empty slot and you carry on working in it; the original stays as it was last saved. Use this before a big change you may regret.</td></tr>
+            <tr><td>See what is in a slot</td><td><span class="row">OPEN</span> lists every saved project with its slot and name.</td></tr>
             <tr><td>Delete one</td><td>There is no delete in the app. Remove its file, for example <code>projects/P07.json</code>, from the card.</td></tr>
           </tbody>
         </table>
         </div>
       </div>
       <div class="shots">
-        <figure class="screen"><img src="img/proj.png" width="1280" height="720" loading="lazy" alt="PROJ page with the NAME row selected, showing the project is called FIRST BEAT."><figcaption>The PROJ page. The name sits beside the slot number.</figcaption></figure>
+        <figure class="screen"><img src="img/proj.png" width="1280" height="720" loading="lazy" alt="PROJ page with the SAVE row selected, reading P01 FIRST BEAT, above the SAVE A COPY, NAME, OPEN and NEW rows."><figcaption>The PROJ page. SAVE names the project it will save.</figcaption></figure>
         <figure class="screen"><img src="img/namer.png" width="1280" height="720" loading="lazy" alt="The naming screen: the name so far above a grid of letters, digits and a few symbols."><figcaption>Naming a project with the letter grid.</figcaption></figure>
       </div>
     </div>
@@ -701,13 +706,14 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <thead><tr><th>Buttons</th><th>What they do</th></tr></thead>
     <tbody>
       <tr><td><kbd>UP</kbd> <kbd>DOWN</kbd></td><td>Previous or next pad (row)</td></tr>
+      <tr><td><kbd>SELECT</kbd>+<kbd class="face">Y</kbd></td><td>Next bank: the grid shows sixteen pads at a time, and this moves to the next sixteen (1–16, 17–32, 33–48, 49–64). The four numbered squares at the top left show which bank is on screen.</td></tr>
       <tr><td><kbd>LEFT</kbd> <kbd>RIGHT</kbd></td><td>Move one step</td></tr>
       <tr><td><kbd>L2</kbd> <kbd>R2</kbd></td><td>Jump four steps</td></tr>
       <tr><td><kbd class="face">A</kbd></td><td>Step on or off. Held while moving, it paints steps or wipes them.</td></tr>
       <tr><td><kbd class="face">Y</kbd></td><td>Accent the step, or remove the accent</td></tr>
       <tr><td><kbd class="face">B</kbd></td><td>Mute the row</td></tr>
       <tr><td><kbd class="face">X</kbd></td><td>Solo the row</td></tr>
-      <tr><td><kbd>LEFT</kbd> past step 1</td><td>Moves onto the row's name. There, <kbd class="face">A</kbd> opens the sample picker to give that pad a new sound; <kbd>RIGHT</kbd> goes back to the steps.</td></tr>
+      <tr><td><kbd>LEFT</kbd> past step 1</td><td>Moves onto the row's name. A panel shows that pad's waveform, volume, pitch and length. <kbd class="face">A</kbd> opens the sample picker to give the pad a new sound; <kbd>RIGHT</kbd> goes back to the steps.</td></tr>
       <tr><td>Left stick</td><td>Tempo. Push right or up for faster, left or down for slower; further moves it quicker.</td></tr>
       <tr><td>Right stick</td><td>Volume of the selected row's pad, the same way.</td></tr>
       <tr><td><kbd>SELECT</kbd>+<kbd>LEFT</kbd> <kbd>RIGHT</kbd></td><td>Step note down or up a semitone</td></tr>
@@ -744,6 +750,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><span class="row">VOLUME</span></td><td>0 to 150</td><td>The pad's level. 100 is the file as recorded.</td></tr>
       <tr><td><span class="row">PITCH</span></td><td>−24 to +24</td><td>Semitones. Pitching up also shortens the sound.</td></tr>
       <tr><td><span class="row">FINE TUNE</span></td><td>−50 to +50</td><td>Cents, for tuning a sound to the others.</td></tr>
+      <tr><td><span class="row">CHORD</span></td><td>off, major, minor, 7th, major 7, minor 7, sus 2, sus 4, dim, power, octave</td><td>One hit plays the sound as that chord: the pad's own note, with the added notes a little quieter on top. Step notes move the whole chord. Sounds up to 20 seconds.</td></tr>
       <tr><td><span class="row">STRETCH</span></td><td>50% to 200%</td><td>Longer or shorter at the same pitch. Drum hits are kept sharp and on time; long held notes can turn a little grainy at large settings. Sounds up to 30 seconds.</td></tr>
       <tr><td><span class="row">FILTER</span></td><td>−100 to +100</td><td>Left of centre closes a low-pass (darker); right raises a high-pass (thinner).</td></tr>
       <tr><td><span class="row">BIT CRUSH</span></td><td>off, 12, 10, 8, 6, 4 bit</td><td>Fewer bits adds grit and noise.</td></tr>
@@ -830,10 +837,10 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><span class="row">RECORD MIC</span></td><td>Records ten seconds from the microphone and chops it onto the bank on screen.</td></tr>
       <tr><td><span class="row">RESAMPLE</span></td><td>Records what PocketPads plays, effects included, onto the selected pad. <kbd>START</kbd> finishes. One minute at most.</td></tr>
       <tr><td><span class="row">EXPORT AUDIO</span></td><td>Saves the song, or the current pattern four times, as a WAV file. Five minutes at most.</td></tr>
-      <tr><td><span class="row">PROJECT</span></td><td>Left and right choose a slot, P01 to P16, for SAVE and LOAD.</td></tr>
       <tr><td><span class="row">NAME</span></td><td>Names the open project, up to fourteen characters.</td></tr>
-      <tr><td><span class="row">SAVE</span></td><td>Saves to the slot shown.</td></tr>
-      <tr><td><span class="row">LOAD</span></td><td>Opens the slot shown. Unsaved changes are lost.</td></tr>
+      <tr><td><span class="row">SAVE</span></td><td>Saves the open project into its own slot.</td></tr>
+      <tr><td><span class="row">SAVE A COPY</span></td><td>Saves a copy in the first empty slot (P01 to P16) and switches to it.</td></tr>
+      <tr><td><span class="row">OPEN</span></td><td>Lists the saved projects; <kbd class="face">A</kbd> opens one. Unsaved changes are lost.</td></tr>
       <tr><td><span class="row">NEW</span></td><td>Starts a starter-kit or style project in the next empty slot.</td></tr>
       <tr><td><span class="row">TEMPO</span></td><td>40 to 300 BPM. Hold <kbd class="face">Y</kbd> to change by five.</td></tr>
       <tr><td><span class="row">SWING</span></td><td>50% (straight) to 75%. 66% is a triplet shuffle.</td></tr>

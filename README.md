@@ -27,7 +27,9 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - Optional sounds in [`packs/`](packs/README.md): six generated kits and a set of 204 public-domain (CC0) recordings; install the ones you want
 - The sample browser plays a file before you pick it, and loads a whole folder onto the sixteen pads in one go
 - "In the beat" in the sample browser: the file you are on stands in for the pad, so the running pattern plays it before you choose
-- On the BEAT page, one press left past step 1 selects the row's name, where A picks a new sound for that pad
+- On the BEAT page, one press left past step 1 selects the row's name, where A picks a new sound for that pad and a panel shows its waveform
+- Chords: a CHORD setting makes one pad play its sound as a major, minor, 7th or other chord, and KEY CHORDS puts the chords of a major or minor key on the sixteen pads
+- PROJ page: SAVE always saves the open project, SAVE A COPY starts a copy in the first empty slot, OPEN lists the saved projects
 - Four style starters (ambient, techno, house, hip hop), each a synthesized kit of sixteen sounds, seven or eight patterns and a full song chaining them; pick one under NEW on the PROJ page
 - The right analog stick works as a data wheel on the SOUND and PROJ pages
 - On the BEAT page the left stick changes the tempo and the right stick the selected pad's volume
