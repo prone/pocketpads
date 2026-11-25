@@ -444,7 +444,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <ol class="steps">
         <li>Switch to an empty bank with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd>, because this fills all sixteen pads of the bank.</li>
         <li>Load a short, pitched sound onto one pad: a bass note, a bell, a vocal stab. The pad you choose becomes the root note. Pad 1 gives you fifteen notes above it; a pad in the middle gives notes above and below.</li>
-        <li>On the SOUND page go to the last row, <span class="row">SPREAD</span>, press <kbd class="face">A</kbd> and confirm.</li>
+        <li>On the SOUND page go down to the <span class="row">SPREAD</span> row, second from last, press <kbd class="face">A</kbd> and confirm.</li>
         <li>Every pad in the bank now plays the same sound one semitone higher than the pad before it. Play them on the PLAY page with <kbd>L2</kbd> and <kbd>R2</kbd> held, or from a MIDI controller.</li>
         <li>Each pad is still its own pad, so each can be drawn into the pattern.</li>
       </ol>
@@ -765,10 +765,11 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><span class="row">FIT STYLE</span></td><td>keep pitch, change pitch</td><td>How FIT TO TEMPO does its job.</td></tr>
       <tr><td><span class="row">FIT TO TEMPO</span></td><td>1 or 2 beats; 1, 2 or 4 bars</td><td>Makes the sound last exactly that long at the project tempo.</td></tr>
       <tr><td><span class="row">SPREAD</span></td><td></td><td>Puts this sound on all sixteen pads of the bank, a semitone apart.</td></tr>
+      <tr><td><span class="row">KEY CHORDS</span></td><td>major key, minor key</td><td><kbd class="face">A</kbd> turns the bank's sixteen pads into the chords of that key, made from this sound, with this pad's pitch as the key note. It replaces what is on those pads. Sounds up to 6 seconds, with STRETCH off.</td></tr>
     </tbody>
   </table>
   </div>
-  <figure class="screen" style="max-width:34rem;margin-bottom:1.5rem"><img src="img/sound_tools.png" width="1280" height="720" loading="lazy" alt="SOUND page scrolled down: reverse, fades, delay and reverb sends, choke, then CHOP selected, with FIT TO TEMPO and SPREAD below."><figcaption>The list scrolls. Further down are the sends, then Chop, Fit to tempo and Spread.</figcaption></figure>
+  <figure class="screen" style="max-width:34rem;margin-bottom:1.5rem"><img src="img/sound_tools.png" width="1280" height="720" loading="lazy" alt="SOUND page scrolled down: reverse, fades, delay and reverb sends, choke, then CHOP selected, with FIT TO TEMPO and SPREAD below."><figcaption>The list scrolls. Further down are the sends, then Chop, Fit to tempo, Spread and Key chords.</figcaption></figure>
   <h4>In the sample picker</h4>
   <div class="table-wrap">
   <table>
@@ -874,6 +875,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td>Step notes</td><td>Two octaves either way; sounds up to 12 seconds</td></tr>
       <tr><td>Stretch</td><td>50% to 200%; sounds up to 30 seconds</td></tr>
       <tr><td>Spread</td><td>Sounds up to 20 seconds</td></tr>
+      <tr><td>Chords</td><td>CHORD: sounds up to 20 seconds. KEY CHORDS: up to 6 seconds, stretch off</td></tr>
       <tr><td>Sample files</td><td>WAV at any rate, mono or stereo, 8, 16, 24 or 32 bit including 32-bit float; MP3, FLAC, OGG, M4A, AAC, AIFF and Opus are converted on first use</td></tr>
     </tbody>
   </table>
@@ -894,7 +896,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td>My file is not in the picker</td><td>Check that it is inside <code>samples</code> and is one of the supported types. Folders and files whose names start with a dot are hidden.</td></tr>
       <tr><td>"CAN'T LOAD" on a file</td><td>The file is damaged or not really audio. Open it on a computer and save it again as a WAV.</td></tr>
       <tr><td>"MIC IS BUSY"</td><td>Another app is holding the microphone. Quit other audio apps, or restart the handheld.</td></tr>
-      <tr><td>"TOO LONG" on stretch, spread or step notes</td><td>Trim the pad with <span class="row">START</span> and <span class="row">END</span>, or chop it first.</td></tr>
+      <tr><td>"TOO LONG" on stretch, spread, chords or step notes</td><td>Trim the pad with <span class="row">START</span> and <span class="row">END</span>, or chop it first.</td></tr>
       <tr><td>Patterns will not switch</td><td>Song mode is on, so patterns follow the chain. Turn <span class="row">SONG MODE</span> off on the SONG page.</td></tr>
       <tr><td>MIDI controller not listed</td><td>Unplug it and plug it in again, then look at the <span class="row">MIDI DEVICES</span> row. The controller has to work as a plain USB MIDI device, without an app of its own.</td></tr>
       <tr><td>PocketPads closes by itself</td><td>Launch it again; your last save is intact. Please report it with <code>pocketpads_crash.log</code> from the app's folder.</td></tr>
