@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PocketPads manual</title>
+<title>PocketPads</title>
 <link rel="icon" type="image/png" href="img/favicon.png">
 <link rel="apple-touch-icon" href="img/touch-icon.png">
-<meta name="description" content="How PocketPads works: a 64-pad sample sequencer for the TrimUI Smart Pro, and how it trades sounds with GrainBrick.">
+<meta name="description" content="PocketPads is a 64-pad sample sequencer for the TrimUI Smart Pro: make beats, sample anything, build songs and perform them. Open source.">
 <style>
 @font-face {
   font-family: "Bricolage";
@@ -85,6 +85,9 @@ code { font: 0.92em var(--mono); background: var(--paper-deep); padding: 0.1em 0
   font: 700 1rem/1.2 var(--display); letter-spacing: 0.01em;
 }
 .btn:hover { background: var(--ink); color: #fff; }
+.btn.alt { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); }
+.btn.alt:hover { background: var(--ink); color: #fff; }
+.btns { display: flex; flex-wrap: wrap; gap: 0.6rem; }
 
 /* ---------- screenshots sit in a handheld-style bezel ---------- */
 .screen {
@@ -108,68 +111,31 @@ code { font: 0.92em var(--mono); background: var(--paper-deep); padding: 0.1em 0
 .page { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 2.75rem; align-items: start; padding-top: 3.5rem; }
 .page:nth-of-type(even) { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); }
 .page:nth-of-type(even) .screen { order: 2; }
-.stack { display: grid; gap: 1.75rem; }
-.page:nth-of-type(even) .stack { order: 2; }
 .tab {
   display: inline-block; font: 700 0.95rem/1 var(--display); letter-spacing: 0.02em;
   background: var(--teal); color: #fff; padding: 0.4rem 0.7rem; border-radius: 5px; margin-bottom: 0.9rem;
 }
-dl.keys { margin: 1.1rem 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 0.55rem 1rem; align-items: baseline; }
-dl.keys dt { white-space: nowrap; }
-dl.keys dd { margin: 0; color: var(--ink-soft); }
-kbd {
-  display: inline-block; min-width: 1.9em; text-align: center;
-  font: 700 0.8rem/1 var(--body); letter-spacing: 0.03em;
-  color: #f4efe6; background: var(--key);
-  padding: 0.42em 0.55em; border-radius: 6px;
-  box-shadow: 0 2px 0 #000, 0 1px 0 #55545b inset;
-}
-kbd.face { border-radius: 999px; background: var(--orange); color: #fff; box-shadow: 0 2px 0 #7a3004, 0 1px 0 #f08a45 inset; }
-
-/* ---------- reference table ---------- */
-.table-wrap { overflow-x: auto; margin-top: 1.5rem; }
-table { border-collapse: collapse; width: 100%; max-width: 52rem; font-variant-numeric: tabular-nums; }
-th, td { text-align: left; padding: 0.7rem 1rem 0.7rem 0; border-bottom: 1px solid var(--rule); vertical-align: baseline; }
-th { font: 700 0.95rem/1.2 var(--display); border-bottom: 2px solid var(--ink); }
-td:first-child { white-space: nowrap; }
-
-/* ---------- GrainBrick workflow ---------- */
-.flow { counter-reset: step; list-style: none; padding: 0; margin: 2rem 0 0; max-width: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
-.flow li { counter-increment: step; border-top: 2px solid var(--ink); padding-top: 0.9rem; margin: 0; }
-.flow li::before { content: counter(step); display: block; font: 800 2.6rem/1 var(--display); color: var(--orange); margin-bottom: 0.5rem; }
-.flow b { display: block; font: 700 1.15rem/1.25 var(--display); margin-bottom: 0.3rem; }
-.flow span { color: var(--ink-soft); font-size: 0.98rem; }
-.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 3rem; }
-.notes { margin-top: 2.5rem; display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 3rem; max-width: none; padding: 0; list-style: none; }
-.notes li { padding: 0.85rem 0; border-top: 1px solid var(--rule); margin: 0; }
-.notes b { font-weight: 650; }
 
 /* ---------- two-column prose ---------- */
 .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 3rem; margin-top: 1.5rem; }
-pre {
-  background: var(--screen); color: #d9dbe3; font: 0.88rem/1.6 var(--mono);
-  padding: 1.1rem 1.3rem; border-radius: 0.6rem; overflow-x: auto; margin: 0 0 1.05rem;
-}
-pre i { color: #ff983e; font-style: normal; }
+.cols > *, .page > *, .hero > * { min-width: 0; }
 .status { background: var(--paper-deep); border-radius: 0.9rem; padding: 2rem 2.2rem; margin-top: 1.5rem; }
-.status h3 { margin-top: 0; }
+.status .btns { margin-top: 1.4rem; }
 footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--rule); color: var(--ink-soft); font-size: 0.92rem; }
 
 @media (max-width: 860px) {
-  .hero, .page, .page:nth-of-type(even), .cols, .pair, .notes { grid-template-columns: 1fr; }
+  .hero, .page, .page:nth-of-type(even), .cols { grid-template-columns: 1fr; }
   .page:nth-of-type(even) .screen { order: 0; }
   .hero { gap: 2rem; padding-top: 2.5rem; }
   .hero .screen { transform: none; }
-  .path, .flow { grid-template-columns: 1fr 1fr; }
+  .path { grid-template-columns: 1fr 1fr; }
   .path div:nth-child(3) { padding-left: 0; border-left: 0; }
   .path div:nth-child(n+3) { border-top: 1px solid var(--rule); margin-top: 1.1rem; }
   section { padding-top: 4rem; }
 }
 @media (max-width: 480px) {
-  .path, .flow { grid-template-columns: 1fr; }
+  .path { grid-template-columns: 1fr; }
   .path div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--rule); margin-top: 1.1rem; }
-  dl.keys { grid-template-columns: 1fr; gap: 0.2rem; }
-  dl.keys dd { margin-bottom: 0.6rem; }
 }
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
@@ -180,12 +146,9 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   <div class="nav-inner">
     <strong>PocketPads</strong>
     <a href="#how">How it works</a>
-    <a href="#pages">The six pages</a>
-    <a href="#controls">Controls</a>
-    <a href="#midi">MIDI</a>
+    <a href="#does">What you can do</a>
     <a href="#grainbrick">GrainBrick</a>
-    <a href="#samples">Your samples</a>
-    <a href="#inside">Under the hood</a>
+    <a href="#status">Where it stands</a>
     <a href="guide.html">Full guide</a>
   </div>
 </nav>
@@ -197,8 +160,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <h1>Pocket&shy;Pads</h1>
     <p class="lede">A 64-pad sample sequencer for the TrimUI Smart Pro. Put sounds on pads, tap out a beat, and build it into patterns.</p>
     <p class="meta">Runs from the Ports menu under KNULLI. It records and chops its own samples, and can also import them from GrainBrick.</p>
-    <p><a class="btn" href="guide.html">Read the full guide</a></p>
-    <p class="meta" style="margin-top:0.9rem">Tutorials, managing projects and sounds, and every setting. Or <a href="https://github.com/prone/pocketpads">view the project on GitHub</a>.</p>
+    <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads">View project on GitHub</a> <a class="btn alt" href="guide.html">Read the full guide</a></p>
     <img class="art" src="img/art.png" width="960" height="720" alt="PocketPads menu artwork: a pixel-art drum sampler with sixteen pads.">
   </div>
   <figure class="screen">
@@ -217,281 +179,75 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   </div>
 </section>
 
-<section id="pages">
-  <h2>The six pages</h2>
-  <p>This is a tour of each page. For step-by-step tutorials and a full reference, see the <a href="guide.html">full guide</a>.</p>
-  <p>The tabs along the top are the six pages. <kbd>L1</kbd> and <kbd>R1</kbd> move between them. The bar also shows the current pattern, project slot, tempo, and an output meter.</p>
+<section id="does">
+  <h2>What you can do with it</h2>
+  <p>Four things, roughly in the order you would meet them. Each links to a short tutorial in the <a href="guide.html">full guide</a>.</p>
 
   <div class="page">
     <figure class="screen">
-      <img src="img/drum.png" width="1280" height="720" loading="lazy" alt="PLAY page with L2 held: pads 1 to 8 show which button plays each one.">
-      <figcaption>Holding L2 shows which button plays each pad.</figcaption>
+      <img src="img/beat.png" width="1280" height="720" loading="lazy" alt="BEAT page: sixteen rows of steps, with filled steps in white and accented steps in orange.">
+      <figcaption>The step grid. White steps play normally, orange steps are accented.</figcaption>
     </figure>
     <div>
-      <span class="tab">PLAY</span>
-      <h3>Play the pads by hand</h3>
-      <p>Move the cursor to a pad and press A to hear it. For finger drumming, hold a trigger: the D-pad and the four face buttons become eight pads at once.</p>
-      <dl class="keys">
-        <dt><kbd class="face">A</kbd></dt><dd>Play the selected pad</dd>
-        <dt><kbd class="face">B</kbd></dt><dd>Mute or unmute it</dd>
-        <dt><kbd class="face">X</kbd></dt><dd>Record on or off. While the beat runs, what you play is written into the pattern on the nearest step.</dd>
-        <dt><kbd class="face">Y</kbd></dt><dd>Jump to the SOUND page for this pad</dd>
-        <dt><kbd>L2</kbd> hold</dt><dd>Buttons play the first eight pads of the bank</dd>
-        <dt><kbd>R2</kbd> hold</dt><dd>Buttons play the other eight</dd>
-        <dt><kbd>SELECT</kbd>+<kbd class="face">Y</kbd></dt><dd>Next bank of pads. The four numbered squares show which bank is on screen.</dd>
-        <dt><kbd>SELECT</kbd>+<kbd class="face">X</kbd></dt><dd>Note repeat on or off. With it on, holding a pad retriggers it in time, for rolls.</dd>
-        <dt><kbd>SELECT</kbd>+<kbd>LEFT</kbd> <kbd>RIGHT</kbd></dt><dd>Repeat rate, from 1/4 to 1/32 including triplets</dd>
-      </dl>
+      <span class="tab">Make beats</span>
+      <h3>Draw a beat, or play it in</h3>
+      <p>Fill in steps on a grid, or hold a trigger and finger-drum on the buttons while it records. Accents, swing and note repeat give it feel, and any step can carry its own note, so one pad can play a bass line.</p>
+      <p><a href="guide.html#t-beat">Draw a beat</a> · <a href="guide.html#t-drum">Play a beat in by hand</a> · <a href="guide.html#t-bass">Write a bass line</a></p>
     </div>
   </div>
 
   <div class="page">
     <figure class="screen">
-      <img src="img/beat.png" width="1280" height="720" loading="lazy" alt="BEAT page: sixteen rows of steps, with filled steps in white and accented steps in orange, and a column marking the current step.">
-      <figcaption>White steps play normally, orange steps are accented. The tinted column is the playhead.</figcaption>
+      <img src="img/chop_sound.png" width="1280" height="720" loading="lazy" alt="SOUND page: a long waveform with one short section lit between a start and an end marker.">
+      <figcaption>A pad playing one slice of a longer sample.</figcaption>
     </figure>
     <div>
-      <span class="tab">BEAT</span>
-      <h3>Draw the beat on a grid</h3>
-      <p>One row per pad, one column per step. Move the cursor with the D-pad and fill in where each sound should hit.</p>
-      <dl class="keys">
-        <dt><kbd class="face">A</kbd></dt><dd>Turn a step on or off. Keep it held and move to paint a run of steps, or wipe one.</dd>
-        <dt><kbd class="face">Y</kbd></dt><dd>Accent the step (louder)</dd>
-        <dt><kbd>SELECT</kbd>+<kbd>LEFT</kbd> <kbd>RIGHT</kbd></dt><dd>Step note: move this step up or down a semitone, for basslines and melodies from one pad. The step shows its note.</dd>
-        <dt><kbd>SELECT</kbd>+<kbd>L2</kbd> <kbd>R2</kbd></dt><dd>Step note down or up an octave</dd>
-        <dt><kbd class="face">B</kbd></dt><dd>Mute the track</dd>
-        <dt><kbd class="face">X</kbd></dt><dd>Solo the track</dd>
-        <dt><kbd>L2</kbd> <kbd>R2</kbd></dt><dd>Jump four steps</dd>
-        <dt><kbd>SELECT</kbd>+<kbd class="face">A</kbd></dt><dd>Clear the track</dd>
-        <dt><kbd>SELECT</kbd>+<kbd class="face">X</kbd></dt><dd>Clear the whole pattern</dd>
-      </dl>
+      <span class="tab">Sample</span>
+      <h3>Use any sound</h3>
+      <p>Record ten seconds with the built-in microphone and it is cut onto the pads for you. Load your own WAV or MP3 files, chop loops into pieces, stretch them to the tempo, pitch them, filter them and make them gritty. Optional sound packs add six kits and 204 public-domain recordings.</p>
+      <p><a href="guide.html#t-sounds">Load your own sounds</a> · <a href="guide.html#t-mic">Record with the microphone</a> · <a href="guide.html#t-chop">Chop a loop</a></p>
     </div>
   </div>
 
   <div class="page">
     <figure class="screen">
-      <img src="img/song.png" width="1280" height="720" loading="lazy" alt="SONG page: song mode on, a chain of pattern letters with the playing one lit, and rows to copy a pattern, clear it and set its length.">
+      <img src="img/song.png" width="1280" height="720" loading="lazy" alt="SONG page: a chain of pattern letters with the playing one lit.">
       <figcaption>A chain of patterns. The lit slot is the one playing.</figcaption>
     </figure>
     <div>
-      <span class="tab">SONG</span>
-      <h3>Chain patterns into a song</h3>
-      <p>Build each section of a track as its own pattern, then list the patterns in the order they should play. With song mode on, START plays the chain from the top and loops it.</p>
-      <ul>
-        <li><b>Chain.</b> Up to 64 slots. On the empty slot at the end, A adds the current pattern. On a filled slot, A and Y step through the patterns, X repeats the slot and B removes it.</li>
-        <li><b>Copy pattern.</b> Copies the current pattern to another letter and switches to it, the quick way to make a variation.</li>
-        <li><b>Clear pattern.</b> Empties the current pattern.</li>
-        <li><b>Length.</b> 16 to 128 steps per pattern. Left and right change it a bar at a time; hold Y to change it one step at a time for odd lengths.</li>
-      </ul>
-    </div>
-  </div>
-
-  <div class="page">
-    <div class="stack">
-    <figure class="screen">
-      <img src="img/chop_sound.png" width="1280" height="720" loading="lazy" alt="SOUND page: a long waveform with a short highlighted section between a start and an end marker, above volume, pitch, start, end and sample settings.">
-      <figcaption>A pad playing one slice of a longer sample. The lit section is what you hear.</figcaption>
-    </figure>
-    <figure class="screen">
-      <img src="img/sound_tools.png" width="1280" height="720" loading="lazy" alt="SOUND page scrolled down: reverse, fades, delay and reverb sends, choke, then the CHOP row selected, with FIT TO TEMPO and SPREAD below it.">
-      <figcaption>Further down the list: the sends, then Chop, Fit to tempo and Spread.</figcaption>
-    </figure>
-    <figure class="screen">
-      <img src="img/live_chop.png" width="1280" height="720" loading="lazy" alt="Live chop: the whole sample with a playhead moving through it and numbered orange lines where slice points have been dropped.">
-      <figcaption>Chopping live. Each tap of A drops a slice point as the sample plays.</figcaption>
-    </figure>
-    </div>
-    <div>
-      <span class="tab">SOUND</span>
-      <h3>Shape each pad</h3>
-      <p>Set a pad's volume and pitch, and trim where the sound starts and ends. The waveform shows the whole file with the kept section lit.</p>
-      <ul>
-        <li><b>Filter.</b> One control: left closes a low-pass (darker), right raises a high-pass (thinner).</li>
-        <li><b>Delay and Reverb.</b> How much of this pad is sent to the shared echo and room.</li>
-        <li><b>Choke.</b> Pads in the same group cut each other off, so a closed hi-hat silences the open one.</li>
-        <li><b>Hear it.</b> The waveform is selected first: press A to play the pad and A again to stop, with a line showing where it is. A tap of SELECT does the same from any row, so you can change a setting and hear it straight away.</li>
-        <li><b>Sample.</b> The first row in the list opens the file browser. X previews a file without loading it, and Y loads a whole folder onto the pads.</li>
-        <li><b>Mode.</b> One-shot plays to the end. Hold plays only while the button is down. Loop starts on one hit and stops on the next.</li>
-        <li><b>Reverse, Fade in, Fade out, Fine tune.</b> Flip the sound, soften its edges, or tune it in cents.</li>
-        <li><b>Chop.</b> Cut this pad's sample onto the pads: at detected hits, into 4, 8 or 16 equal pieces, or live, where the sample plays and you tap A wherever a new pad should begin.</li>
-        <li><b>Bit crush and Lo-fi rate.</b> Fewer bits adds grit; a lower sample rate gives the dull, ringing top of old samplers.</li>
-        <li><b>Stretch.</b> Makes a sound longer or shorter, from half to double its length, without changing its pitch. Drum hits are kept sharp and on time; long held notes can turn a little grainy at large settings. Works on samples up to 30 seconds.</li>
-        <li><b>Fit to tempo.</b> Makes a loop last exactly one beat, one bar or several bars at the project tempo. Fit style chooses how: Keep pitch stretches it, so the loop stays in key; Change pitch speeds it up or slows it down like a classic sampler.</li>
-        <li><b>Spread.</b> Puts this sound on all sixteen pads a semitone apart, with this pad as the root, for bass lines and melodies.</li>
-      </ul>
-      <p>The list scrolls. The right stick works as a data wheel here, on the PROJ page and on the SONG page's Length row: push it sideways to change the selected value, further for faster. On the FX page the sticks play effects instead.</p>
-      <dl class="keys">
-        <dt><kbd>UP</kbd> <kbd>DOWN</kbd></dt><dd>Choose a setting</dd>
-        <dt><kbd>LEFT</kbd> <kbd>RIGHT</kbd></dt><dd>Change it. Hold <kbd class="face">Y</kbd> to move five times faster.</dd>
-        <dt><kbd class="face">A</kbd></dt><dd>Hear the pad</dd>
-        <dt><kbd class="face">X</kbd></dt><dd>Pick a different sample</dd>
-        <dt><kbd>L2</kbd> <kbd>R2</kbd></dt><dd>Previous or next pad</dd>
-        <dt><kbd class="face">B</kbd></dt><dd>Back to PLAY</dd>
-      </dl>
-      <p style="margin-top:1.1rem">Pitch runs two octaves up or down in semitones. Like a classic sampler, pitching up also shortens the sound; use Stretch to change the length on its own.</p>
+      <span class="tab">Build songs</span>
+      <h3>From a loop to a finished track</h3>
+      <p>A project holds eight patterns. Chain them in any order to make a song, then export it as a WAV file. Or start from one of four ready-made styles (ambient, techno, house and hip hop), each with its own kit, patterns and a full song to take apart.</p>
+      <p><a href="guide.html#t-song">Turn patterns into a song</a> · <a href="guide.html#t-style">Start from a style</a> · <a href="guide.html#t-export">Export a track</a></p>
     </div>
   </div>
 
   <div class="page">
     <figure class="screen">
-      <img src="img/fx.png" width="1280" height="720" loading="lazy" alt="FX page: compressor, delay, reverb and stick settings on the left; on the right four hold-to-perform buttons and two stick diagrams, the left stick pushed toward LOW and the right toward FAST and ECHO.">
+      <img src="img/fx.png" width="1280" height="720" loading="lazy" alt="FX page: effect settings on the left, four hold-to-perform buttons and two stick diagrams on the right.">
       <figcaption>Both sticks pushed: the filter closing, the tempo bending up, echo on.</figcaption>
     </figure>
     <div>
-      <span class="tab">FX</span>
-      <h3>Effects and live performance</h3>
-      <p>The left side sets the master compressor, which pulls the whole mix together, and the shared delay and reverb: delay time locked to the tempo, feedback, and reverb size. The right side is for playing the mix itself. Hold a face button and the effect applies to everything; let go and the sound snaps back.</p>
-      <dl class="keys">
-        <dt><kbd class="face">A</kbd> hold</dt><dd>Stutter: loops the last slice of the beat</dd>
-        <dt><kbd class="face">B</kbd> hold</dt><dd>Tape stop: the mix slows to a halt</dd>
-        <dt><kbd class="face">X</kbd> hold</dt><dd>Low-pass sweep: the sound closes down and goes dark</dd>
-        <dt><kbd class="face">Y</kbd> hold</dt><dd>High-pass sweep: the lows drop out</dd>
-      </dl>
-      <p style="margin-top:1.1rem">The two sticks play effects by feel: the further you push, the more you get, and letting go ends it. Each stick has two directions, sideways and up-down, and the four rows at the bottom of the list choose what each one does.</p>
-      <ul>
-        <li><b>Filter.</b> Low-pass one way, high-pass the other.</li>
-        <li><b>Tempo.</b> Bends the beat slower or faster, then back to the set tempo.</li>
-        <li><b>Fade out.</b> Pulls the whole mix down to silence.</li>
-        <li><b>Echo and Reverb.</b> Throw the mix into the delay or the reverb.</li>
-        <li><b>Stutter.</b> Loops get shorter the further you push.</li>
-        <li><b>Crush, Pan and Tape stop.</b> Grit, a swing to one side, and the slow halt.</li>
-      </ul>
+      <span class="tab">Perform</span>
+      <h3>Play the mix itself</h3>
+      <p>Hold a button to stutter the beat, stop it like a tape or sweep a filter across it, and push the two sticks for filter, tempo, echo and more. Record the result back onto a pad. A USB MIDI controller plays the pads and turns their settings.</p>
+      <p><a href="guide.html#t-perform">Perform with effects</a> · <a href="guide.html#t-midi">Use a MIDI controller</a></p>
     </div>
   </div>
-
-  <div class="page">
-    <figure class="screen">
-      <img src="img/proj.png" width="1280" height="720" loading="lazy" alt="PROJ page: a list of rows from record mic and export audio through project, name, save, load and new to tempo, swing, master and MIDI.">
-    </figure>
-    <div>
-      <span class="tab">PROJ</span>
-      <h3>Projects and global settings</h3>
-      <p>Choose a row with up and down, change values with left and right, and press <kbd class="face">A</kbd> to run an action. Anything that would overwrite work asks first.</p>
-      <ul>
-        <li><b>Project, Name, Save, Load, New.</b> Sixteen slots, P01 to P16. Left and right on the Project row choose a slot; Save and Load act on the slot shown. Name gives the open project a name of up to fourteen characters: move over the letters, <kbd class="face">A</kbd> adds one, <kbd class="face">X</kbd> deletes, START finishes. The name is shown beside the slot number. New keeps the open project and starts a fresh one in the next empty slot. It asks what to start from: the starter kit with a demo beat, or one of four styles (ambient, techno, house, hip hop). A style is a kit of sixteen sounds, a set of patterns and a full song; press START to hear it, then change anything. The sounds of a style are made the first time you pick it, which takes a moment.</li>
-        <li><b>Record.</b> Ten seconds from the built-in microphone, cut at each hit and placed on the pads.</li>
-        <li><b>Resample.</b> Records what PocketPads itself is playing, effects included, onto the selected pad. Press START to finish.</li>
-        <li><b>Tempo and Swing.</b> 40 to 300 BPM. Swing uses the MPC scale: 50% is straight, 66% is a triplet shuffle, 75% is the most it goes.</li>
-        <li><b>Export audio.</b> Saves the song, or four rounds of the current pattern, as a WAV file in <code>samples/exports/</code>. Five minutes at most.</li>
-        <li><b>Master.</b> Overall output level.</li>
-        <li><b>MIDI out and MIDI devices.</b> See <a href="#midi">MIDI</a> below.</li>
-        <li><b>Import Chops and GrainBrick.</b> The link to GrainBrick, <a href="#grainbrick">described below</a>.</li>
-      </ul>
-      <p>The panel on the right reports audio health: dropouts and peak load for the session.</p>
-    </div>
-  </div>
-</section>
-
-<section id="controls">
-  <h2>Controls that work everywhere</h2>
-  <div class="table-wrap">
-  <table>
-    <thead><tr><th>Buttons</th><th>What they do</th></tr></thead>
-    <tbody>
-      <tr><td><kbd>START</kbd></td><td>Play or stop the beat</td></tr>
-      <tr><td><kbd>L1</kbd> <kbd>R1</kbd></td><td>Previous or next page</td></tr>
-      <tr><td><kbd>SELECT</kbd>+<kbd>L1</kbd> <kbd>R1</kbd></td><td>Previous or next pattern (A–H)</td></tr>
-      <tr><td><kbd>SELECT</kbd>+<kbd class="face">Y</kbd></td><td>Next bank of pads (1–4)</td></tr>
-      <tr><td><kbd>SELECT</kbd>+<kbd>UP</kbd> <kbd>DOWN</kbd></td><td>Tempo up or down by 1 BPM</td></tr>
-      <tr><td><kbd>SELECT</kbd>+<kbd>START</kbd></td><td>Quit, saving the project to its slot</td></tr>
-    </tbody>
-  </table>
-  </div>
-  <p style="margin-top:1.5rem">Button names match what is printed on the Smart Pro: A is the right-hand face button and B is the bottom one.</p>
-</section>
-
-<section id="midi">
-  <h2>MIDI</h2>
-  <p>Plug a USB MIDI controller into the handheld and PocketPads connects to it by itself; the MIDI DEVICES row on the PROJ page shows what it found. This part is new and has been tried with one USB controller, pads only, so expect rough edges.</p>
-  <ul>
-    <li><b>Pads and keys.</b> Notes play the sixteen pads of the bank on screen, with velocity: C1 (note 36) is the bank's first pad, and the pads repeat every sixteen notes. Change bank on the handheld and the controller follows.</li>
-    <li><b>Knobs.</b> The first eight knobs you turn become, in the order you first turn them, the selected pad's volume, pitch, filter, delay, reverb, start, end and fade out. A message names the setting as you turn.</li>
-    <li><b>MIDI out.</b> Choose a channel on the PROJ page and every pad that sounds also sends a note, with step notes included, so the sequencer can play an external synth. Clock, start and stop go out too, to keep other gear in time.</li>
-    <li><b>Start and stop</b> from a controller start and stop the beat.</li>
-  </ul>
 </section>
 
 <section id="grainbrick">
-  <h2>Working with GrainBrick</h2>
-  <p>PocketPads records and chops on its own, but GrainBrick goes much further with sampling, so the two apps share sounds. GrainBrick saves recordings as WAV files and stores slice points in its project files, and PocketPads reads those directly. GrainBrick itself is not modified.</p>
-
-  <ol class="flow">
-    <li><b>Hop over</b><span>On the PROJ page choose GRAINBRICK. Your project is saved and GrainBrick opens.</span></li>
-    <li><b>Sample and chop</b><span>Record or load a sound, slice it on GrainBrick's RHYTHM page, and save the GrainBrick project.</span></li>
-    <li><b>Come back</b><span>Quit GrainBrick with START+SELECT. You land straight back in PocketPads.</span></li>
-    <li><b>Import the chops</b><span>Choose IMPORT CHOPS, pick the project, and its slices land on pads 1–16.</span></li>
-  </ol>
-
-  <div class="pair">
-    <figure class="screen">
-      <img src="img/import.png" width="1280" height="720" loading="lazy" alt="Import Chops list showing GrainBrick projects, each with its number of slices.">
-      <figcaption>GrainBrick projects that contain slices, newest first.</figcaption>
-    </figure>
-    <figure class="screen">
-      <img src="img/chops.png" width="1280" height="720" loading="lazy" alt="PLAY page after import: all sixteen pads are named Chop 1 to Chop 16.">
-      <figcaption>After import, each pad plays one slice. Your patterns are kept.</figcaption>
-    </figure>
-  </div>
-
-  <ul class="notes">
-    <li><b>Single sounds work too.</b> The sample picker on the SOUND page has GrainBrick's recordings and samples folders next to your own.</li>
-    <li><b>Slices are of the original sample.</b> You get the raw audio between the slice points, without GrainBrick's granular processing or effects.</li>
-    <li><b>To capture the processed sound,</b> record it in GrainBrick, then load that recording onto a pad.</li>
-    <li><b>Sixteen slices at most.</b> If a GrainBrick project has more, the first sixteen are imported.</li>
-    <li><b>Save in GrainBrick first.</b> The import reads saved project files, so unsaved chops will not appear.</li>
-    <li><b>Switching takes a few seconds</b> each way, because each app has to start up.</li>
-  </ul>
+  <h2>Works with GrainBrick</h2>
+  <p>GrainBrick is a separate, free granular sampler for the same handheld. PocketPads can hop over to it and back, and import the slices you make there straight onto the pads. GrainBrick itself is not modified. <a href="guide.html#t-grainbrick">How the two work together</a>.</p>
 </section>
 
-<section id="samples">
-  <h2>Using your own samples</h2>
-  <div class="cols">
-    <div>
-      <p>Copy WAV or MP3 files into the samples folder on the SD card, in subfolders if you like. To load one, go to the SOUND page and press <kbd class="face">A</kbd> on the SAMPLE row at the top, or press <kbd class="face">X</kbd> from any row. In the picker, <kbd class="face">X</kbd> previews a file and <kbd class="face">A</kbd> assigns it to the pad. <kbd class="face">Y</kbd> on a folder puts its first sixteen sounds on the sixteen pads of the bank on screen, which is the quick way to load a kit.</p>
-      <p>The project also offers optional sounds: six generated kits and 204 public-domain recordings, in the <code>packs</code> folder of the <a href="https://github.com/prone/pocketpads/tree/main/packs">repository</a>. Copy the folders you want into the samples folder.</p>
-      <pre>/userdata/roms/ports/pocketpads/<i>samples</i>/</pre>
-      <p>WAV files at any sample rate work, mono or stereo, in 8, 16, 24 or 32-bit, including 32-bit float. MP3, FLAC, OGG, M4A, AAC, AIFF and Opus files are converted to WAV the first time you pick them. Any file longer than three minutes is cut at three minutes.</p>
-    </div>
-    <figure class="screen">
-      <img src="img/browser.png" width="1280" height="720" loading="lazy" alt="Sample picker listing the numbered WAV files in a kit folder, with the buttons along the bottom: A choose, X preview, Y whole folder onto the pads, B cancel.">
-    </figure>
-  </div>
-</section>
-
-<section id="inside">
-  <h2>Under the hood</h2>
-  <div class="cols">
-    <div>
-      <h3>How sound is made</h3>
-      <p>PocketPads is written in Python with pygame for the screen and buttons, and NumPy for audio. Three ideas keep it fast enough for a handheld.</p>
-      <ul>
-        <li><b>Sounds are prepared ahead of time.</b> When you change a pad's pitch or trim, the result is rendered once and stored. Playing a pad is then just adding numbers together.</li>
-        <li><b>The sequencer counts audio samples, not screen frames.</b> Each step lands on an exact sample position, so timing does not drift or wobble with screen redraws.</li>
-        <li><b>Audio runs on its own thread</b> and feeds the sound card in small blocks, about 12 milliseconds each, keeping a short queue ahead of playback.</li>
-      </ul>
-      <p>Delay and reverb are shared: pads send into them instead of each having their own, which keeps the load low. A gentle limiter on the output rounds off peaks when many sounds overlap, with headroom left so single hits stay clean.</p>
-    </div>
-    <div>
-      <h3>Where things live</h3>
-      <pre>/userdata/roms/ports/
-  <i>PocketPads.sh</i>        launcher shown in the Ports menu
-  pocketpads/
-    main.py            screens and buttons
-    engine.py          audio engine and sequencer
-    kit.py             builds the starter kit
-    styles.py          builds the style kits, patterns and songs
-    <i>samples/</i>           your WAV files, plus samples/kit and samples/styles
-    <i>projects/</i>          P01.json to P16.json
-    pocketpads.log     button presses and audio stats</pre>
-      <p>Projects are small text files listing each pad's sample and settings and each pattern's steps. The samples themselves are not copied into the project, so keep the files a project uses.</p>
-      <p>The launcher is also what makes the GrainBrick hop work: when PocketPads exits asking for GrainBrick, the launcher runs GrainBrick and then starts PocketPads again.</p>
-    </div>
-  </div>
-
+<section id="status">
+  <h2>Where it stands</h2>
   <div class="status">
-    <h3>Where it stands</h3>
-    <p>This is an early version, tested on one TrimUI Smart Pro running KNULLI Scarab. Pads, the step grid, patterns, projects, the GrainBrick link, note repeat, per-pad filter, delay and reverb, choke groups and the performance effects, microphone recording, chopping, resampling, time-stretch, song mode, lo-fi, a master compressor, audio export and pad banks are all in. MIDI is in, tried so far with one USB controller's pads. Not built: Bluetooth MIDI.</p>
-    <p>PocketPads is open source under the MIT licence. The code and install instructions are at <a href="https://github.com/prone/pocketpads">github.com/prone/pocketpads</a>.</p>
+    <p>This is an early version, 0.4, tested on one TrimUI Smart Pro running KNULLI Scarab. Everything on this page is built and working. MIDI has been tried with one USB controller's pads so far. Bluetooth MIDI is not built.</p>
+    <p>PocketPads is open source under the MIT licence. It is written in Python, with pygame for the screen and buttons and NumPy for the audio.</p>
+    <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads">View project on GitHub</a> <a class="btn alt" href="guide.html">Read the full guide</a></p>
+    <p style="margin:1.1rem 0 0">Install steps are in the <a href="guide.html#m-install">guide</a> and the <a href="https://github.com/prone/pocketpads#readme">README</a>.</p>
   </div>
 </section>
 

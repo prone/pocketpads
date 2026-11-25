@@ -6,7 +6,7 @@
 <title>PocketPads guide</title>
 <link rel="icon" type="image/png" href="img/favicon.png">
 <link rel="apple-touch-icon" href="img/touch-icon.png">
-<meta name="description" content="The full PocketPads guide: step-by-step tutorials, how to manage projects, sounds and files, and a reference for every setting and button.">
+<meta name="description" content="The full PocketPads guide: fourteen step-by-step tutorials, how to manage projects, sounds and files, and a reference for every setting and button.">
 <style>
 @font-face {
   font-family: "Bricolage";
@@ -179,6 +179,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <a href="#manage">Managing</a>
     <a href="#reference">Reference</a>
     <a href="#help">Fixing problems</a>
+    <a href="#inside">Under the hood</a>
   </div>
 </nav>
 
@@ -204,6 +205,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <li><a href="#t-perform">Perform with effects and resample</a></li>
     <li><a href="#t-export">Export a finished track</a></li>
     <li><a href="#t-midi">Use a MIDI controller</a></li>
+    <li><a href="#t-grainbrick">Trade sounds with GrainBrick</a></li>
   </ol>
   <b>Managing</b>
   <ul>
@@ -226,6 +228,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   <b>Help</b>
   <ul>
     <li><a href="#help">Fixing problems</a></li>
+    <li><a href="#inside">Under the hood</a></li>
   </ul>
 </aside>
 
@@ -233,8 +236,8 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 
 <header class="intro">
   <h1>The full guide</h1>
-  <p class="lede">Thirteen short tutorials, how to look after your projects and sounds, and a reference for every setting and button in PocketPads 0.4.</p>
-  <p>New to PocketPads? The <a href="index.html">overview</a> is a quicker tour. This page goes through everything, one job at a time. The tutorials build on each other, but each one also works by itself.</p>
+  <p class="lede">Fourteen short tutorials, how to look after your projects and sounds, and a reference for every setting and button in PocketPads 0.4.</p>
+  <p>New to PocketPads? The <a href="index.html">overview</a> says what it is in a minute. This page is the instructions: everything, one job at a time. The tutorials build on each other, but each one also works by itself.</p>
 </header>
 
 <section class="part" id="basics">
@@ -487,11 +490,38 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <li>Hit the controller's pads or keys. They play the sixteen pads of the bank on screen, harder hits louder. Note C1 (number 36) is the bank's first pad, and the sixteen pads repeat every sixteen notes, so it works wherever your controller's pads start.</li>
         <li>Change bank on the handheld with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd> and the controller plays the new bank.</li>
         <li>Turn a knob. The first eight knobs you touch become, in the order you first turn them, the selected pad's volume, pitch, filter, delay, reverb, start, end and fade out. A message names the setting as you turn it.</li>
+        <li>Start and stop buttons on a controller start and stop the beat.</li>
         <li>To record from the controller, turn record on (<kbd class="face">X</kbd> on the PLAY page) and start the beat, just as with the buttons.</li>
         <li><b>To play a synth from PocketPads:</b> set <span class="row">MIDI OUT</span> on the PROJ page to a channel from 1 to 16. Every pad that sounds also sends a note, with its step note, and clock, start and stop go out to keep other gear in time.</li>
       </ol>
     </div>
     <div class="tip"><p><b>Still new.</b> MIDI has been tried with one USB controller's pads. Bluetooth MIDI is not built. If your controller is not found, see <a href="#help">Fixing problems</a>.</p></div>
+  </article>
+
+  <article class="tut" id="t-grainbrick">
+    <div class="tut-head"><div class="tut-num">14</div><div><h3>Trade sounds with GrainBrick</h3><p>GrainBrick is a separate, free granular sampler for the same handheld. If it is installed next to PocketPads, the two share sounds.</p></div></div>
+    <div class="tut-body">
+      <div>
+        <p>PocketPads records and chops on its own, but GrainBrick goes much further with sampling. GrainBrick saves recordings as WAV files and keeps slice points in its project files, and PocketPads reads those directly. GrainBrick itself is not modified. The two rows used here, <span class="row">IMPORT CHOPS</span> and <span class="row">GRAINBRICK</span>, only appear on the PROJ page when GrainBrick is installed.</p>
+        <ol class="steps">
+          <li><b>Hop over.</b> On the PROJ page choose <span class="row">GRAINBRICK</span> and confirm. Your project is saved and GrainBrick opens.</li>
+          <li><b>Sample and chop.</b> Record or load a sound, slice it on GrainBrick's RHYTHM page, and save the GrainBrick project.</li>
+          <li><b>Come back.</b> Quit GrainBrick with <kbd>START</kbd>+<kbd>SELECT</kbd>. You land straight back in PocketPads.</li>
+          <li><b>Import the chops.</b> Choose the bank with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd>, then <span class="row">IMPORT CHOPS</span>. Pick the project from the list (<kbd class="face">X</kbd> plays its sample first) and press <kbd class="face">A</kbd>. Its slices land on the sixteen pads of the bank on screen, and your patterns are kept.</li>
+        </ol>
+        <ul>
+          <li><b>Single sounds work too.</b> The sample picker has GrainBrick's recordings and samples folders next to your own.</li>
+          <li><b>Slices are of the original sample.</b> You get the raw audio between the slice points, without GrainBrick's granular processing or effects. To capture the processed sound, record it in GrainBrick, then load that recording onto a pad.</li>
+          <li><b>Sixteen slices at most.</b> If a GrainBrick project has more, the first sixteen are imported.</li>
+          <li><b>Save in GrainBrick first.</b> The import reads saved project files, so unsaved chops will not appear.</li>
+          <li><b>Switching takes a few seconds</b> each way, because each app has to start up.</li>
+        </ul>
+      </div>
+      <div class="shots">
+        <figure class="screen"><img src="img/import.png" width="1280" height="720" loading="lazy" alt="Import Chops list showing GrainBrick projects, each with its number of slices."><figcaption>GrainBrick projects that contain slices, newest first.</figcaption></figure>
+        <figure class="screen"><img src="img/chops.png" width="1280" height="720" loading="lazy" alt="PLAY page after import: all sixteen pads are named Chop 1 to Chop 16."><figcaption>After import, each pad plays one slice.</figcaption></figure>
+      </div>
+    </div>
   </article>
 </section>
 
@@ -698,7 +728,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   </div>
 
   <h3 id="r-sound">SOUND</h3>
-  <p><kbd>UP</kbd> and <kbd>DOWN</kbd> choose a row; <kbd>LEFT</kbd> and <kbd>RIGHT</kbd>, or the right stick, change it. Holding <kbd class="face">Y</kbd> changes five times faster. <kbd>L2</kbd> and <kbd>R2</kbd> move to the previous or next pad. A tap of <kbd>SELECT</kbd> plays the pad, or stops it, from any row. <kbd class="face">X</kbd> opens the sample picker and <kbd class="face">B</kbd> returns to PLAY.</p>
+  <p><kbd>UP</kbd> and <kbd>DOWN</kbd> choose a row; <kbd>LEFT</kbd> and <kbd>RIGHT</kbd>, or the right stick, change it (the stick also works on the PROJ page and on the SONG page's LENGTH row: further is faster). Holding <kbd class="face">Y</kbd> changes five times faster. <kbd>L2</kbd> and <kbd>R2</kbd> move to the previous or next pad. A tap of <kbd>SELECT</kbd> plays the pad, or stops it, from any row. <kbd class="face">X</kbd> opens the sample picker and <kbd class="face">B</kbd> returns to PLAY.</p>
   <div class="table-wrap">
   <table>
     <thead><tr><th>Row</th><th>Range</th><th>What it does</th></tr></thead>
@@ -708,7 +738,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><span class="row">VOLUME</span></td><td>0 to 150</td><td>The pad's level. 100 is the file as recorded.</td></tr>
       <tr><td><span class="row">PITCH</span></td><td>−24 to +24</td><td>Semitones. Pitching up also shortens the sound.</td></tr>
       <tr><td><span class="row">FINE TUNE</span></td><td>−50 to +50</td><td>Cents, for tuning a sound to the others.</td></tr>
-      <tr><td><span class="row">STRETCH</span></td><td>50% to 200%</td><td>Longer or shorter at the same pitch. Sounds up to 30 seconds.</td></tr>
+      <tr><td><span class="row">STRETCH</span></td><td>50% to 200%</td><td>Longer or shorter at the same pitch. Drum hits are kept sharp and on time; long held notes can turn a little grainy at large settings. Sounds up to 30 seconds.</td></tr>
       <tr><td><span class="row">FILTER</span></td><td>−100 to +100</td><td>Left of centre closes a low-pass (darker); right raises a high-pass (thinner).</td></tr>
       <tr><td><span class="row">BIT CRUSH</span></td><td>off, 12, 10, 8, 6, 4 bit</td><td>Fewer bits adds grit and noise.</td></tr>
       <tr><td><span class="row">LO-FI RATE</span></td><td>off, 22, 11, 5.5, 2.8 kHz</td><td>A lower rate gives the dull, ringing top of old samplers.</td></tr>
@@ -725,6 +755,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     </tbody>
   </table>
   </div>
+  <figure class="screen" style="max-width:34rem;margin-bottom:1.5rem"><img src="img/sound_tools.png" width="1280" height="720" loading="lazy" alt="SOUND page scrolled down: reverse, fades, delay and reverb sends, choke, then CHOP selected, with FIT TO TEMPO and SPREAD below."><figcaption>The list scrolls. Further down are the sends, then Chop, Fit to tempo and Spread.</figcaption></figure>
   <h4>In the sample picker</h4>
   <div class="table-wrap">
   <table>
@@ -767,6 +798,21 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   </table>
   </div>
   <p>Hold <kbd class="face">A</kbd> for stutter, <kbd class="face">B</kbd> for tape stop, <kbd class="face">X</kbd> for a low-pass sweep and <kbd class="face">Y</kbd> for a high-pass sweep. Filter, tempo and pan do something different in each direction of a stick; the other effects do the same whichever way you push. The stick choices are remembered for all projects.</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Stick effect</th><th>What pushing does</th></tr></thead>
+    <tbody>
+      <tr><td>Filter</td><td>Low-pass one way, high-pass the other</td></tr>
+      <tr><td>Tempo</td><td>Bends the beat slower or faster, then back to the set tempo when you let go</td></tr>
+      <tr><td>Pan</td><td>Swings the mix to one side</td></tr>
+      <tr><td>Fade out</td><td>Pulls the whole mix down to silence</td></tr>
+      <tr><td>Echo, Reverb</td><td>Throws the mix into the delay or the reverb</td></tr>
+      <tr><td>Stutter</td><td>Loops the beat; the loops get shorter the further you push</td></tr>
+      <tr><td>Crush</td><td>Adds grit</td></tr>
+      <tr><td>Tape stop</td><td>Slows the mix towards a halt</td></tr>
+    </tbody>
+  </table>
+  </div>
 
   <h3 id="r-proj">PROJ</h3>
   <div class="table-wrap">
@@ -786,7 +832,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><span class="row">MASTER</span></td><td>Overall output level, 0 to 150.</td></tr>
       <tr><td><span class="row">MIDI OUT</span></td><td>Off, or the channel (1 to 16) that pads send notes on.</td></tr>
       <tr><td><span class="row">MIDI DEVICES</span></td><td>Shows the controllers that are connected.</td></tr>
-      <tr><td><span class="row">IMPORT CHOPS</span></td><td>Puts a GrainBrick project's slices on the pads. Shown only when GrainBrick is installed. See the <a href="index.html#grainbrick">overview</a>.</td></tr>
+      <tr><td><span class="row">IMPORT CHOPS</span></td><td>Puts a GrainBrick project's slices on the pads. Shown only when GrainBrick is installed. See <a href="#t-grainbrick">tutorial 14</a>.</td></tr>
       <tr><td><span class="row">GRAINBRICK</span></td><td>Saves, opens GrainBrick, and returns here when you quit it.</td></tr>
       <tr><td><span class="row">QUIT</span></td><td>Saves and exits.</td></tr>
     </tbody>
@@ -813,7 +859,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td>Step notes</td><td>Two octaves either way; sounds up to 12 seconds</td></tr>
       <tr><td>Stretch</td><td>50% to 200%; sounds up to 30 seconds</td></tr>
       <tr><td>Spread</td><td>Sounds up to 20 seconds</td></tr>
-      <tr><td>Sample files</td><td>WAV at any rate, mono or stereo, 8 to 32 bit; MP3, FLAC, OGG, M4A, AAC, AIFF and Opus are converted on first use</td></tr>
+      <tr><td>Sample files</td><td>WAV at any rate, mono or stereo, 8, 16, 24 or 32 bit including 32-bit float; MP3, FLAC, OGG, M4A, AAC, AIFF and Opus are converted on first use</td></tr>
     </tbody>
   </table>
   </div>
@@ -841,6 +887,29 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   </table>
   </div>
   <p>Problems and ideas are welcome on <a href="https://github.com/prone/pocketpads/issues">GitHub</a>.</p>
+</section>
+
+<section class="part" id="inside">
+  <h2>Under the hood</h2>
+  <h3 style="margin-top:1.5rem">How sound is made</h3>
+  <p>PocketPads is written in Python with pygame for the screen and buttons, and NumPy for audio. Three ideas keep it fast enough for a handheld.</p>
+  <ul>
+    <li><b>Sounds are prepared ahead of time.</b> When you change a pad's pitch or trim, the result is rendered once and stored. Playing a pad is then just adding numbers together.</li>
+    <li><b>The sequencer counts audio samples, not screen frames.</b> Each step lands on an exact sample position, so timing does not drift or wobble with screen redraws.</li>
+    <li><b>Audio runs on its own thread</b> and feeds the sound card in small blocks, about 12 milliseconds each, keeping a short queue ahead of playback.</li>
+  </ul>
+  <p>Delay and reverb are shared: pads send into them instead of each having their own, which keeps the load low. A gentle limiter on the output rounds off peaks when many sounds overlap, with headroom left so single hits stay clean.</p>
+  <h3 style="margin-top:2rem">The program's files</h3>
+  <pre>/userdata/roms/ports/
+  <i>PocketPads.sh</i>        launcher shown in the Ports menu
+  pocketpads/
+    main.py            screens and buttons
+    engine.py          audio engine and sequencer
+    midi.py            MIDI in and out
+    kit.py             builds the starter kit
+    styles.py          builds the style kits, patterns and songs</pre>
+  <p>Your own files, in <code>projects</code> and <code>samples</code>, are described under <a href="#m-files">Files on the card</a>. Projects are small text files listing each pad's sample and settings and each pattern's steps.</p>
+  <p>The launcher is also what makes the GrainBrick hop work: when PocketPads exits asking for GrainBrick, the launcher runs GrainBrick and then starts PocketPads again.</p>
 </section>
 
 </main>
