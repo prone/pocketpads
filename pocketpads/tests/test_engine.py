@@ -99,4 +99,12 @@ for _ in range(40): k.render(BLOCK)
 assert k.cur_pat == 1, k.cur_pat
 k.stop()
 print("review regressions: export tail clean, step notes kept, song moves on")
+# project names: cleaned on the way in, saved first in the file, and absent from older files
+assert engine.clean_name("  night  drive!! 2 and more") == "NIGHT DRIVE 2" and engine.clean_name(None) == ""
+e.name = "NIGHT DRIVE"; e.save(f)
+assert open(f).read(60).startswith('{"version": 3, "name": "NIGHT DRIVE"')
+e3 = Engine(); e3.load(f); assert e3.name == "NIGHT DRIVE"
+e3.from_dict({"bpm": 100}); assert e3.name == ""
+e3.from_dict({"name": "x" * 40 + '"'}); assert e3.name == "X" * 14
+print("project name kept:", e.name)
 print("ALL OK")

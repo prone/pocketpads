@@ -521,6 +521,16 @@ class Pad:
         return 0.0 if self.buf is None else len(self.buf) / SR
 
 
+NAME_MAX = 14                        # longest project name
+NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -&'"
+
+
+def clean_name(text):
+    """A project name as it is kept: capitals, digits and a few marks, single spaces, at most NAME_MAX long."""
+    kept = "".join(c for c in str(text or "").upper() if c in NAME_CHARS)
+    return " ".join(kept.split())[:NAME_MAX].strip()
+
+
 def new_pattern():
     """An empty pattern. steps: 0 off, 1 on, 2 accent. notes: semitones above the pad's own pitch."""
     return {"length": 16, "steps": [[0] * MAX_STEPS for _ in range(NPADS)],
@@ -543,6 +553,7 @@ class Engine:
         self.cur_pat, self.pending_pat = 0, None
         self.song, self.song_on, self.song_pos = [], False, 0     # chain of pattern numbers; next slot to play
         self.bpm, self.swing, self.master = 120.0, 50.0, 0.8
+        self.name = ""                   # the project's name; empty means it is known by its slot only
         self._comp_amt = 0.0
         self.comp, self._comp_gain = 0.0, 1.0      # master compressor amount 0..1, and its current gain
         self.delay_div, self.delay_fb, self.reverb_size = 1, 0.45, 0.4
@@ -1149,7 +1160,8 @@ class Engine:
     # ----- projects
     def to_dict(self):
         return {
-            "version": 3, "bpm": self.bpm, "swing": self.swing, "master": self.master,
+            "version": 3, "name": self.name,       # the name comes first: slot lists read only the start of a file
+            "bpm": self.bpm, "swing": self.swing, "master": self.master,
             "delay_div": self.delay_div, "delay_fb": self.delay_fb, "reverb_size": self.reverb_size,
             "repeat_div": self.repeat_div, "stutter_div": self.stutter_div, "comp": self.comp,
             "pattern": self.cur_pat,
@@ -1166,6 +1178,7 @@ class Engine:
     def from_dict(self, d):
         """Load a project; returns a list of sample files that could not be loaded."""
         missing = []
+        self.name = clean_name(d.get("name") or "")
         self.bpm = float(min(300, max(40, d.get("bpm", 120))))
         sw = float(d.get("swing", 50))
         if sw < 1.0:            # version 1 projects stored swing as 0..0.7

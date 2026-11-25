@@ -10,7 +10,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 
 ## Features
 
-- 64 pads in four banks of sixteen, a step grid of 16 to 128 steps with accents and a note per step, eight patterns, sixteen project slots
+- 64 pads in four banks of sixteen, a step grid of 16 to 128 steps with accents and a note per step, eight patterns, sixteen project slots that can be named
 - Song mode: chain patterns in order, copy and clear patterns
 - Lo-fi per pad (bit crush, sample-rate reduction) and a master compressor
 - Analog sticks play performance effects (filter, tempo bend, fade, echo, reverb, stutter, crush, pan, tape stop), with the effect for each direction chosen on the FX page
@@ -104,7 +104,6 @@ Each prints a line ending in `OK` when it passes.
 - Converting a long MP3 pauses the screen until it finishes.
 - Stretch works on samples up to 30 seconds and pauses briefly while it renders (about 0.16 s per second of audio on the Smart Pro).
 - MIDI in has been tried with one USB controller, and only its pads; knobs, MIDI out and clock have not been tried with real gear. Bluetooth MIDI devices are not connected automatically.
-- Projects are numbered, not named.
 - An export is five minutes at most.
 - The MIDI clock is timed by the system clock, not the sound card, so gear synced to it can drift over a long song.
 

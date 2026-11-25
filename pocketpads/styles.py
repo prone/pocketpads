@@ -487,7 +487,7 @@ def project(style, root):
             for step, value, note in parse_row(spec, length):
                 steps[index[name]][step], notes[index[name]][step] = value, note
         patterns.append({"length": length, "steps": steps, "notes": notes})
-    return {"bpm": st["bpm"], "swing": st["swing"], "master": 0.8, "comp": st["comp"], "delay_div": st["delay_div"],
+    return {"name": style, "bpm": st["bpm"], "swing": st["swing"], "master": 0.8, "comp": st["comp"], "delay_div": st["delay_div"],
             "delay_fb": st["delay_fb"], "reverb_size": st["reverb_size"], "pattern": 0, "patterns": patterns,
             "song": [PAT_NAMES.index(c) for c in st["song"]], "song_on": True, "pads": pads}
 

@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import signal
 import struct
 import subprocess
@@ -18,9 +19,9 @@ import pygame
 import kit
 import midi
 import styles
-from engine import (APP_DIR, BANK, BLOCK, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NBANKS, NPADS, NPAT,
+from engine import (APP_DIR, BANK, BLOCK, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NAME_CHARS, NAME_MAX, NBANKS, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
-                    STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine,
+                    STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine, clean_name,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
 
 SAMPLES = os.path.join(APP_DIR, "samples")
@@ -154,6 +155,8 @@ class App:
         self.browser = None
         self.picker = None
         self.confirm = None
+        self.namer = None      # the name being typed: {"text", "x", "y"} (PROJ page, NAME row)
+        self.slot_names = {}   # slot -> (file time, name), so stepping through the slots does not reread files
         self.running = True
         self.exit_code = 0
         self.script = self.load_script()
@@ -336,7 +339,7 @@ class App:
 
     def modal(self):
         """True while a dialog, list or recording owns the buttons."""
-        return bool(self.confirm or self.browser or self.picker or self.recording or self.live)
+        return bool(self.confirm or self.browser or self.picker or self.recording or self.live or self.namer)
 
     def tick_repeat(self):
         now = time.time()
@@ -385,6 +388,53 @@ class App:
     def slot_path(self, slot=None):
         return os.path.join(PROJECTS, "P%02d.json" % (slot or self.slot))
 
+    def slot_name(self, slot):
+        """The name of the project in a slot ("" if it has none). Only the start of the file is read."""
+        if slot == self.loaded:
+            return self.eng.name
+        path = self.slot_path(slot)
+        try:
+            stamp = os.path.getmtime(path)
+            hit = self.slot_names.get(slot)
+            if hit is None or hit[0] != stamp:
+                with open(path) as f:
+                    m = re.match(r'\{"version": \d+, "name": "([^"\\]*)"', f.read(160))
+                hit = self.slot_names[slot] = (stamp, clean_name(m.group(1)) if m else "")
+            return hit[1]
+        except OSError:
+            return ""
+
+    def slot_label(self, slot):
+        """A slot as shown to the user: "P03 NIGHT DRIVE", or "P03" for a project without a name."""
+        name = self.slot_name(slot)
+        return "P%02d %s" % (slot, name) if name else "P%02d" % slot
+
+    # ------------------------------------------------------------ naming a project
+    NAME_ROWS = [NAME_CHARS[i:i + 10] for i in range(0, len(NAME_CHARS), 10)]
+
+    def start_naming(self):
+        self.namer = {"text": self.eng.name, "x": 0, "y": 0}
+
+    def press_namer(self, b):
+        nm = self.namer
+        if b in DIRS:
+            if b in ("left", "right"):
+                nm["x"] = (nm["x"] + (1 if b == "right" else -1)) % 10
+            else:
+                nm["y"] = (nm["y"] + (1 if b == "down" else -1)) % len(self.NAME_ROWS)
+        elif b == "A":
+            if len(nm["text"]) < NAME_MAX:
+                nm["text"] += self.NAME_ROWS[nm["y"]][nm["x"]]
+        elif b == "X":
+            nm["text"] = nm["text"][:-1]
+        elif b == "B":
+            self.namer = None
+        elif b == "start":
+            self.namer = None
+            self.eng.name = clean_name(nm["text"])
+            self.save_project(quiet=True, autosave=True)      # so the name is on the card, and in the slot list, at once
+            self.say("P%02d IS NOW %s" % (self.loaded, self.eng.name) if self.eng.name else "P%02d HAS NO NAME NOW" % self.loaded, 3)
+
     def save_project(self, quiet=False, autosave=False):
         """Save to the slot the PROJECT row shows; autosave always goes to the slot the project came from."""
         slot = self.loaded if autosave else self.slot
@@ -395,7 +445,7 @@ class App:
             with open(STATE, "w") as f:
                 json.dump({"slot": slot, "midi_out": self.midi.out_channel, "sticks": self.stick_fx}, f)
             if not quiet:
-                self.say("SAVED P%02d" % slot)
+                self.say("SAVED %s" % self.slot_label(slot))
         except OSError as e:
             self.say("SAVE FAILED: %s" % e, 4)
 
@@ -425,7 +475,7 @@ class App:
         if missing:
             self.say("%d SAMPLE(S) MISSING" % len(missing), 4)
         elif not quiet:
-            self.say("LOADED P%02d" % self.slot)
+            self.say("LOADED %s" % self.slot_label(self.slot))
         return True
 
     def ask_new_project(self):
@@ -504,6 +554,8 @@ class App:
             elif b == "B":
                 self.confirm = None
             return
+        if self.namer:
+            return self.press_namer(b)
         if self.browser:
             return self.press_browser(b)
         if self.picker:
@@ -1127,7 +1179,7 @@ class App:
                 axis = self.STICK_ROWS[row]
                 self.stick_fx[axis] = names[(names.index(self.stick_fx[axis]) + d) % len(names)]
 
-    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "PROJECT", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES"]
+    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "PROJECT", "NAME", "SAVE", "LOAD", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES"]
                  + (["IMPORT CHOPS", "GRAINBRICK"] if GB_DIR else []) + ["QUIT"])
 
     def press_proj(self, b, sel):
@@ -1153,11 +1205,13 @@ class App:
         elif b == "A":
             if row == "SAVE":
                 if os.path.exists(self.slot_path()):
-                    self.confirm = ("OVERWRITE P%02d?" % self.slot, self.save_project)
+                    self.confirm = ("OVERWRITE %s?" % self.slot_label(self.slot), self.save_project)
                 else:
                     self.save_project()
             elif row == "LOAD":
                 self.confirm = ("LOAD P%02d? UNSAVED CHANGES ARE LOST" % self.slot, self.load_project)
+            elif row == "NAME":
+                self.start_naming()
             elif row == "NEW":
                 self.ask_new_project()
             elif row == "RECORD MIC":
@@ -1749,6 +1803,20 @@ class App:
             self.box(150, 196, 340, 8, DARK, LINE, 3)
             self.box(150, 196, max(2, 340 * min(1.0, r["level"] ** 0.5)), 8, TEAL, None, 3)
             self.text("A stop early and use it", 320, 222, "s", DIM, "c")
+        if self.namer:
+            nm = self.namer
+            self.box(100, 62, 440, 246, PANEL, ORANGE, 6, 2)
+            self.text("NAME FOR P%02d" % self.loaded, 320, 82, "m", ORANGE, "c")
+            self.box(170, 98, 300, 34, DARK, LINE, 4)
+            shown = nm["text"] + ("_" if len(nm["text"]) < NAME_MAX and int(time.time() * 2) % 2 else "")
+            self.text(shown, 320, 115, "l", TEXT, "c")
+            for r, row in enumerate(self.NAME_ROWS):
+                for c, ch in enumerate(row):
+                    x, y = 125 + c * 39, 144 + r * 33
+                    on = (c, r) == (nm["x"], nm["y"])
+                    self.box(x, y, 36, 30, TEAL if on else DARK, None if on else LINE, 4)
+                    self.text("SPACE" if ch == " " else ch, x + 18, y + 15, "s" if ch == " " else "l", DARK if on else TEXT, "c")
+            self.text("A add letter    X delete    START done    B cancel", 320, 292, "h", mix(DIM, TEXT, 0.6), "c")
         if self.confirm:
             self.box(150, 130, 340, 90, PANEL, ORANGE, 5, 2)
             self.text(self.confirm[0], 320, 162, "m", TEXT, "c")
@@ -2021,7 +2089,8 @@ class App:
         e = self.eng
         exists = os.path.exists(self.slot_path())
         here = "  - open now" if self.slot == self.loaded else ""
-        vals = {"PROJECT": "P%02d  %s%s" % (self.slot, "(saved)" if exists else "(empty)", here),
+        vals = {"PROJECT": "%s  %s%s" % (self.slot_label(self.slot), "(saved)" if exists else "(empty)", here),
+                "NAME": ("%s  -  A to rename P%02d" % (e.name, self.loaded)) if e.name else "none  -  A to name P%02d" % self.loaded,
                 "SAVE": "save to P%02d" % self.slot, "LOAD": "load P%02d" % self.slot,
                 "NEW": "starter kit, or a style with a full song", "TEMPO": "%d BPM" % round(e.bpm),
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
