@@ -29,7 +29,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - Four style starters (ambient, techno, house, hip hop), each a synthesized kit of sixteen sounds, seven or eight patterns and a full song chaining them; pick one under NEW on the PROJ page
 - The right analog stick works as a data wheel on the SOUND and PROJ pages
 
-The manual is a single static page in [`site/`](site/index.html).
+The manual is in [`site/`](site/index.html): an overview page, and a [full guide](site/guide.html) with tutorials, how to manage projects and sounds, and a reference for every setting.
 
 ## What's new in 0.4
 
