@@ -17,6 +17,7 @@ import pygame
 
 import kit
 import midi
+import styles
 from engine import (APP_DIR, BANK, BLOCK, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NBANKS, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine,
@@ -428,25 +429,43 @@ class App:
         return True
 
     def ask_new_project(self):
+        """NEW: pick the starter kit or a style, then start it in the first empty slot."""
+        items = [("STARTER KIT   drums and bass with a demo beat", "")]
+        items += [("%s   %s" % (name, styles.ABOUT[name]), name) for name in styles.ORDER]
+        self.picker = {"title": "NEW PROJECT: PICK A KIT AND SONG", "items": items, "idx": 0, "fn": self.ask_new_slot,
+                       "hint": "A choose    B cancel    each style is a kit, patterns and a full song"}
+
+    def ask_new_slot(self, style):
         """NEW keeps the open project and starts the new one in the first empty slot."""
+        what = "%s PROJECT" % style if style else "NEW PROJECT"
         empty = [n for n in range(1, SLOTS + 1) if n != self.loaded and not os.path.exists(self.slot_path(n))]
         if not empty:
-            self.confirm = ("ALL %d SLOTS ARE USED. REPLACE P%02d WITH A NEW PROJECT?" % (SLOTS, self.slot), self.new_project)
+            self.confirm = ("ALL %d SLOTS ARE USED. REPLACE P%02d WITH A %s?" % (SLOTS, self.slot, what),
+                            lambda: self.new_project(style=style))
             return
 
         def go():
             self.save_project(quiet=True, autosave=True)       # keep what is open
             self.slot = empty[0]
-            self.new_project(quiet=True)
+            self.new_project(quiet=True, style=style)
             self.save_project(quiet=True)
-            self.say("NEW PROJECT IN P%02d  (P%02d WAS SAVED)" % (empty[0], keep), 3.5)
+            self.say("%s IN P%02d (P%02d SAVED)%s" % (what, empty[0], keep, ". START PLAYS THE SONG" if style else ""), 4.5)
         keep = self.loaded
-        self.confirm = ("START A NEW PROJECT IN P%02d?" % empty[0], go)
+        self.confirm = ("START A %s IN P%02d?" % (what, empty[0]), go)
 
-    def new_project(self, quiet=False):
+    def new_project(self, quiet=False, style=None):
         self.eng.stop()
         self.loaded, self.pending_bake = self.slot, None
         self.sel = self.cur_step = 0
+        self.midi_held.clear()
+        if style:
+            # A style is a ready-made project: its kit (made on first use, which takes a moment), patterns and song.
+            self.say("MAKING THE %s KIT ..." % style, 2)
+            self.draw()
+            self.eng.from_dict(styles.project(style, os.path.join(SAMPLES, "styles")))
+            if not quiet:
+                self.say("%s PROJECT: START PLAYS THE SONG" % style, 4)
+            return
         self.eng.from_dict({"bpm": 112})
         pads = self.eng.pads
         for p, path in zip(pads, self.kit_paths):
@@ -1703,7 +1722,8 @@ class App:
             for n, (_, item) in enumerate(pk["items"][top:top + 12]):
                 if item == self.previewing:
                     self.text("PLAYING", 564, 76 + n * 20, "s", ORANGE, "r")
-            self.text("A import to pads %d-%d    X play / stop    B cancel" % (self.base() + 1, self.base() + BANK), 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+            self.text(pk.get("hint") or "A import to pads %d-%d    X play / stop    B cancel" % (self.base() + 1, self.base() + BANK),
+                      320, 317, "h", mix(DIM, TEXT, 0.6), "c")
         if self.live:
             lv = self.live
             pos = min(1.0, max(0.0, self.live_pos()))
@@ -2003,7 +2023,7 @@ class App:
         here = "  - open now" if self.slot == self.loaded else ""
         vals = {"PROJECT": "P%02d  %s%s" % (self.slot, "(saved)" if exists else "(empty)", here),
                 "SAVE": "save to P%02d" % self.slot, "LOAD": "load P%02d" % self.slot,
-                "NEW": "new project in the next empty slot", "TEMPO": "%d BPM" % round(e.bpm),
+                "NEW": "starter kit, or a style with a full song", "TEMPO": "%d BPM" % round(e.bpm),
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
                 "MIDI OUT": ("channel %d  -  pads send notes, plus clock" % self.midi.out_channel) if self.midi.out_channel
                             else "OFF",

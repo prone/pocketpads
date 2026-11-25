@@ -24,6 +24,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - Fit a loop to the tempo by stretching (pitch kept) or repitching, spread one sound across all pads a semitone apart, resample the output to a pad
 - Loads WAV directly, and MP3, FLAC, OGG, M4A, AAC, AIFF and Opus through ffmpeg
 - A built-in starter kit that is synthesized on first run, so no sample files are shipped
+- Four style starters (ambient, techno, house, hip hop), each a synthesized kit of sixteen sounds, seven or eight patterns and a full song chaining them; pick one under NEW on the PROJ page
 - The right analog stick works as a data wheel on the SOUND and PROJ pages
 
 The manual is a single static page in [`site/`](site/index.html).
@@ -82,6 +83,7 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 | `pocketpads/main.py` | Screens, input and everything the user touches |
 | `pocketpads/midi.py` | MIDI in and out through the ALSA sequencer (ctypes, no extra packages) |
 | `pocketpads/kit.py` | Synthesizes the starter kit and the demo beat |
+| `pocketpads/styles.py` | The style starters: their sounds, patterns (written as text) and songs |
 | `pocketpads/art/` | The artwork and the script that draws it |
 | `pocketpads/tests/` | Engine tests |
 | `site/` | The manual |
@@ -91,7 +93,7 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 The tests cover the engine and need only NumPy:
 
 ```
-for t in engine effects sampler robustness; do python pocketpads/tests/test_$t.py pocketpads; done
+for t in engine effects sampler robustness styles; do python pocketpads/tests/test_$t.py pocketpads; done
 ```
 
 Each prints a line ending in `OK` when it passes.

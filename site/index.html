@@ -365,7 +365,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <h3>Projects and global settings</h3>
       <p>Choose a row with up and down, change values with left and right, and press <kbd class="face">A</kbd> to run an action. Anything that would overwrite work asks first.</p>
       <ul>
-        <li><b>Project, Save, Load, New.</b> Sixteen slots, P01 to P16. Left and right on the Project row choose a slot; Save and Load act on the slot shown. New keeps the open project and starts a fresh one, with the starter kit and a demo beat, in the next empty slot.</li>
+        <li><b>Project, Save, Load, New.</b> Sixteen slots, P01 to P16. Left and right on the Project row choose a slot; Save and Load act on the slot shown. New keeps the open project and starts a fresh one in the next empty slot. It asks what to start from: the starter kit with a demo beat, or one of four styles (ambient, techno, house, hip hop). A style is a kit of sixteen sounds, a set of patterns and a full song; press START to hear it, then change anything. The sounds of a style are made the first time you pick it, which takes a moment.</li>
         <li><b>Record.</b> Ten seconds from the built-in microphone, cut at each hit and placed on the pads.</li>
         <li><b>Resample.</b> Records what PocketPads itself is playing, effects included, onto the selected pad. Press START to finish.</li>
         <li><b>Tempo and Swing.</b> 40 to 300 BPM. Swing uses the MPC scale: 50% is straight, 66% is a triplet shuffle, 75% is the most it goes.</li>
@@ -475,7 +475,8 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     main.py            screens and buttons
     engine.py          audio engine and sequencer
     kit.py             builds the starter kit
-    <i>samples/</i>           your WAV files, plus samples/kit
+    styles.py          builds the style kits, patterns and songs
+    <i>samples/</i>           your WAV files, plus samples/kit and samples/styles
     <i>projects/</i>          P01.json to P16.json
     pocketpads.log     button presses and audio stats</pre>
       <p>Projects are small text files listing each pad's sample and settings and each pattern's steps. The samples themselves are not copied into the project, so keep the files a project uses.</p>
