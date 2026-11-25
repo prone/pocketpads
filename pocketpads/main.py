@@ -140,6 +140,10 @@ class App:
         self.select_alone = False
         self.audition = None   # (pad, start time) while the SOUND page is playing a pad
         self.wheel, self.wheel_acc, self.wheel_seen = 0.0, 0.0, False
+        self.in_beat = False           # sample picker: the highlighted file stands in for the pad, so the beat plays it
+        self.trial = None              # while it does: (pad index, the pad as it was, file now on it)
+        self.beat_name = False         # BEAT page: the cursor is on the row's name, left of step 1
+        self.beat_acc = [0.0, 0.0]     # BEAT page: part-steps owed to the tempo (left stick) and volume (right stick)
         self.sticks = {"lx": 0.0, "ly": 0.0, "rx": 0.0, "ry": 0.0}      # both sticks, -1 to 1 (up is negative)
         self.sticks_seen = set()
         self.stick_level = {}
@@ -174,6 +178,7 @@ class App:
                 state = json.load(f)
             self.slot = min(SLOTS, max(1, int(state.get("slot", 1))))
             self.midi.out_channel = int(state.get("midi_out", 0)) % 17
+            self.in_beat = bool(state.get("in_beat", False))
             for axis, name in dict(state.get("sticks") or {}).items():
                 if axis in self.stick_fx and name in self.STICK_FX:
                     self.stick_fx[axis] = name
@@ -366,6 +371,34 @@ class App:
         e.fx_stut, e.fx_crush, e.fx_tape = v["STUTTER"], v["CRUSH"], v["TAPE STOP"] > 0.5
         self.stick_level = v
 
+    def tick_beat_sticks(self, dt):
+        """On the BEAT page the left stick changes the tempo and the right stick the selected pad's volume.
+        Push right or up for more, left or down for less; the further the push, the faster it moves."""
+        if PAGES[self.page] != "BEAT" or self.modal():
+            self.beat_acc = [0.0, 0.0]
+            return
+        e, k = self.eng, self.sticks
+        for i, (x, y, slow, fast) in enumerate(((k["lx"], k["ly"], 1.0, 20.0), (k["rx"], k["ry"], 3.0, 40.0))):
+            v = x if abs(x) >= abs(y) else -y           # up counts as more
+            if abs(v) < 0.3:
+                self.beat_acc[i] = 0.0
+                continue
+            push = min(1.0, (abs(v) - 0.3) / 0.65)
+            self.beat_acc[i] += dt * (slow + (fast - slow) * push * push)
+            n = int(self.beat_acc[i])
+            if not n:
+                continue
+            self.beat_acc[i] -= n
+            self.select_alone = False
+            d = n if v > 0 else -n
+            if i == 0:
+                e.bpm = float(min(300, max(40, round(e.bpm) + d)))
+                self.say("TEMPO %d BPM" % e.bpm, 1.0)
+            else:
+                p = e.pads[self.sel]
+                p.vol = round(min(1.5, max(0.0, p.vol + 0.01 * d)), 2)
+                self.say("PAD %d %s VOLUME %d" % (self.sel + 1, p.name[:16], round(p.vol * 100)), 1.0)
+
     def tick_wheel(self, dt):
         """The right stick is a data wheel: push it sideways to change the selected value."""
         v = self.wheel
@@ -437,13 +470,14 @@ class App:
 
     def save_project(self, quiet=False, autosave=False):
         """Save to the slot the PROJECT row shows; autosave always goes to the slot the project came from."""
+        self.trial_end()                # a sound only being tried in the picker is not part of the project
         slot = self.loaded if autosave else self.slot
         try:
             self.flush_bake()
             self.eng.save(self.slot_path(slot))
             self.loaded = slot
             with open(STATE, "w") as f:
-                json.dump({"slot": slot, "midi_out": self.midi.out_channel, "sticks": self.stick_fx}, f)
+                json.dump({"slot": slot, "midi_out": self.midi.out_channel, "sticks": self.stick_fx, "in_beat": self.in_beat}, f)
             if not quiet:
                 self.say("SAVED %s" % self.slot_label(slot))
         except OSError as e:
@@ -650,6 +684,14 @@ class App:
         row, notes = pat["steps"][self.sel], pat["notes"][self.sel]
         length = pat["length"]
         self.cur_step = min(self.cur_step, length - 1)
+        if self.beat_name and b in ("A", "Y", "left", "right", "l2", "r2") and not (sel and b == "A"):
+            # On the row's name, left of step 1: A picks a new sound for the pad, and any sideways move goes back to the steps.
+            if b == "A":
+                self.open_browser()
+            elif b != "Y":
+                self.beat_name = False
+                self.cur_step = {"right": 0, "r2": 0, "left": length - 1, "l2": length - 4}[b]
+            return
         if sel and b in ("left", "right", "l2", "r2"):
             # Step notes: SELECT + left/right moves this step a semitone, SELECT + L2/R2 an octave.
             d = {"left": -1, "right": 1, "l2": -12, "r2": 12}[b]
@@ -679,6 +721,8 @@ class App:
                     elif not row[self.cur_step]:         # accents already there are left alone
                         row[self.cur_step] = self.paint
                 e.refresh_variants(self.sel)
+            elif b == "left" and self.cur_step == 0:
+                self.beat_name = True               # one more to the left of step 1 is the row's name
             else:
                 self.cur_step = (self.cur_step + d) % length
         elif b == "A" and sel:
@@ -1445,8 +1489,46 @@ class App:
         d = os.path.dirname(p.path) if p.path else SAMPLES
         if not os.path.isdir(d) or not self.root_of(d):
             d = SAMPLES
-        self.browser = {"dir": d, "items": [], "idx": 0}
+        self.browser = {"dir": d, "items": [], "idx": 0, "moved": time.time()}
         self.browser_list(os.path.basename(p.path) if p.path else None)
+
+    # "In the beat": while the picker is open the highlighted file takes the pad's place, with the pad's own
+    # settings, so the running pattern plays it next to the rest of the kit. Nothing is kept unless A is pressed.
+    def trial_end(self, keep=False):
+        """Stop trying a file: put the pad back as it was, or with keep=True leave the new sound on it."""
+        t, self.trial = self.trial, None
+        if t and not keep:
+            self.eng.note_off(t[0])
+            self.eng.pads[t[0]].__dict__.update(t[1])
+
+    def tick_trial(self):
+        br = self.browser
+        if not br or self.confirm:
+            return
+        kind, name = br["items"][br["idx"]] if br["items"] else ("", "")
+        path = os.path.join(br["dir"], name) if kind == "wav" and br["dir"] else None
+        want = path if self.in_beat else None
+        if (self.trial[2] if self.trial else None) == want or time.time() - br.get("moved", 0) < 0.25:
+            return                          # nothing to change, or the cursor is still moving
+        self.trial_end()
+        if not want:
+            return
+        pad = self.eng.pads[self.sel]
+        before = dict(pad.__dict__)
+        try:
+            src = self.convert(want) if want.lower().endswith(CONVERT_EXTS) else want
+            self.pending_bake = None
+            self.eng.note_off(self.sel)
+            pad.start, pad.end = 0.0, 1.0
+            pad.load(src)
+            pad.name = self.sound_name(want)
+            self.trial = (self.sel, before, want)
+        except (OSError, ValueError) as e:
+            pad.__dict__.update(before)
+            self.trial = (self.sel, before, want)       # remembered, so a bad file is not tried again every frame
+            self.trial_end()
+            br["moved"] = time.time() + 3600            # until the cursor moves again
+            self.say("CAN'T LOAD: %s" % e, 3)
 
     def browser_list(self, focus=None):
         br = self.browser
@@ -1471,10 +1553,21 @@ class App:
     def press_browser(self, b):
         br = self.browser
         items = br["items"]
+        br["moved"] = time.time()
         if b == "B":
             self.eng.note_off(self.sel)
+            self.trial_end()
             self.browser = None
             prune_cache(self.eng.pads)
+            return
+        if b == "start":                    # the beat can be started and stopped without leaving the picker
+            self.eng.toggle_play()
+            return
+        if b == "r1":
+            self.in_beat = not self.in_beat
+            self.say("IN THE BEAT: ON - THE PATTERN PLAYS THE FILE YOU ARE ON" if self.in_beat else "IN THE BEAT: OFF", 3)
+            if self.in_beat and not self.eng.playing:
+                self.eng.play()
             return
         if br["dir"] is not None and not self.root_of(br["dir"]):
             br["dir"] = None                # the folder went away (card removed, GrainBrick moved)
@@ -1525,12 +1618,14 @@ class App:
                     self.eng.preview(self.sel, load_cached(path)[0])
                     return
                 self.eng.note_off(self.sel)
+                self.trial_end(keep=True)
                 self.pending_bake = None
                 pad.load(path)
                 pad.name = self.sound_name(name)
                 pad.start, pad.end = 0.0, 1.0
                 pad.bake()
-                self.eng.trigger(self.sel)
+                if not (self.in_beat and self.eng.playing):     # in the beat it is already being heard
+                    self.eng.trigger(self.sel)
                 self.browser = None
                 prune_cache(self.eng.pads)
                 self.say("PAD %d: %s" % (self.sel + 1, pad.name))
@@ -1555,6 +1650,7 @@ class App:
 
     def load_folder(self, folder):
         """Put a folder's sounds on the pads of the bank on screen, one each, from the first pad."""
+        self.trial_end()
         self.pending_bake = None
         first, done, failed = self.base(), 0, 0
         for i, src in enumerate(self.folder_sounds(folder)):
@@ -2019,9 +2115,15 @@ class App:
                 else:
                     self.box(x + 2, y + 1, cw - 6, rh - 5, PANEL if (st // 4) % 2 == 0 else mix(PANEL, BG, 0.5),
                              None, 2)
+        if self.beat_name:
+            self.box(3, gy + (self.sel - first) * rh - 1, 90, rh, None, ORANGE, 3, 2)
+            self.hints("A pick a new sound for this pad   up down pad   right back to the steps   B mute   X solo   "
+                       "L stick tempo   R stick volume   SELECT+Y bank   SELECT+A clear track")
+            return
         self.box(gx + (self.cur_step - view) * cw, gy + (self.sel - first) * rh - 1, cw - 2, rh - 1, None, ORANGE, 3, 2)
-        self.hints("A step (hold + move to paint)   Y accent   B mute   X solo   L2 R2 jump   "
-                   "SELECT+left right note   SELECT+L2 R2 octave   SELECT+Y bank   SELECT+A clear track   SELECT+X clear all")
+        self.hints("A step (hold to paint)   Y accent   B mute   X solo   L2 R2 jump   left past step 1: change sound   "
+                   "L stick tempo   R stick volume   SELECT+left right note   SELECT+L2 R2 octave   SELECT+Y bank   "
+                   "SELECT+A clear track   SELECT+X clear all")
 
     def draw_sound(self):
         e = self.eng
@@ -2204,7 +2306,8 @@ class App:
             self.text(label, 78, y + 10, "m", TEXT if kind == "wav" else TEAL)
             if kind == "wav" and not name.lower().endswith(".wav"):
                 self.text(os.path.splitext(name)[1][1:].upper(), 562, y + 10, "s", ORANGE, "r")
-        self.text("A choose    X preview    Y whole folder onto the pads    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+        self.text("A choose   X hear   Y folder onto pads   START beat   R1 in the beat: %s   B cancel" % ("ON" if self.in_beat else "OFF"),
+                  320, 317, "h", mix(DIM, TEXT, 0.6), "c")
 
     # ------------------------------------------------------------ scripted testing
     def load_script(self):
@@ -2311,6 +2414,8 @@ class App:
             self.tick_live()
             self.tick_sticks()
             self.tick_wheel(1 / 30.0)
+            self.tick_beat_sticks(1 / 30.0)
+            self.tick_trial()
             self.tick_midi()
             if self.resampling and time.time() - self.resampling[0] > 60:
                 self.finish_resample()

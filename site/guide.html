@@ -250,8 +250,8 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <div><b>L2 and R2</b><span>Held on the PLAY page they turn the buttons into drum pads. Elsewhere they jump: four steps, or to the next pad.</span></div>
     <div><b>START</b><span>Plays and stops the beat, on every page.</span></div>
     <div><b>SELECT</b><span>A shift key. Held with another button it reaches the second set of controls, such as changing pattern or bank.</span></div>
-    <div><b>Left stick</b><span>Plays effects on the FX page.</span></div>
-    <div><b>Right stick</b><span>A data wheel on the SOUND and PROJ pages: push sideways to change the selected value. On the FX page it plays effects.</span></div>
+    <div><b>Left stick</b><span>Plays effects on the FX page. On the BEAT page it changes the tempo.</span></div>
+    <div><b>Right stick</b><span>A data wheel on the SOUND and PROJ pages: push sideways to change the selected value. On the FX page it plays effects, and on the BEAT page it sets the selected pad's volume.</span></div>
     <div><b>Questions</b><span>Anything that would replace or erase work asks first. <kbd class="face">A</kbd> is yes, <kbd class="face">B</kbd> is no.</span></div>
   </div>
   <h3 class="minor">The bar along the top</h3>
@@ -291,6 +291,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <li>Press <kbd>DOWN</kbd> to the snare row and put steps on 5 and 13.</li>
         <li>Go down to the closed hi-hat. Hold <kbd class="face">A</kbd> on step 1 and keep it held while you press <kbd>RIGHT</kbd>: every step you pass is filled. Holding <kbd class="face">A</kbd> on a filled step and moving wipes them instead.</li>
         <li>Press <kbd>START</kbd> to hear it. The tinted column is the playhead.</li>
+        <li>While it plays, push the left stick to speed the beat up or slow it down, and the right stick to turn the row you are on up or down. A message shows the new value.</li>
         <li>Move to a hat step and press <kbd class="face">Y</kbd> to accent it. Accented steps are orange and play louder; try every other one.</li>
         <li>Go to the PROJ page, choose <span class="row">SWING</span> and raise it to about 58. 50 is straight and 66 is a full triplet shuffle.</li>
       </ol>
@@ -384,7 +385,9 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
         <li>Move with <kbd>UP</kbd> and <kbd>DOWN</kbd> (<kbd>L2</kbd> and <kbd>R2</kbd> jump eight). <kbd class="face">A</kbd> on a folder opens it, and <kbd class="face">A</kbd> on <code>[ .. ]</code> goes back up.</li>
         <li>On a file, press <kbd class="face">X</kbd> to hear it without loading it, and <kbd class="face">A</kbd> to put it on the pad.</li>
         <li><b>For a whole kit:</b> first choose which bank it should fill with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd>. Then, in the picker, highlight a folder and press <kbd class="face">Y</kbd>. PocketPads asks, then puts the folder's first sixteen sounds on the sixteen pads of that bank, in name order.</li>
-        <li><kbd class="face">B</kbd> closes the picker without changing anything.</li>
+        <li><b>To hear a sound in your beat before choosing it:</b> press <kbd>R1</kbd> in the picker to turn on "in the beat". The beat starts, and whichever file you stop on takes the pad's place in the pattern. Move down the list to audition one after another.</li>
+        <li>You can also get here from the BEAT page: press <kbd>LEFT</kbd> past step 1 to land on a row's name, then <kbd class="face">A</kbd>.</li>
+        <li><kbd class="face">B</kbd> closes the picker and leaves the pad as it was.</li>
       </ol>
       <div class="shots">
         <figure class="screen"><img src="img/browser_kits.png" width="1280" height="720" loading="lazy" alt="Sample picker showing folders of kits, with hard-drums highlighted."><figcaption>Folders are in brackets. Y on a folder loads it as a kit.</figcaption></figure>
@@ -704,6 +707,9 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><kbd class="face">Y</kbd></td><td>Accent the step, or remove the accent</td></tr>
       <tr><td><kbd class="face">B</kbd></td><td>Mute the row</td></tr>
       <tr><td><kbd class="face">X</kbd></td><td>Solo the row</td></tr>
+      <tr><td><kbd>LEFT</kbd> past step 1</td><td>Moves onto the row's name. There, <kbd class="face">A</kbd> opens the sample picker to give that pad a new sound; <kbd>RIGHT</kbd> goes back to the steps.</td></tr>
+      <tr><td>Left stick</td><td>Tempo. Push right or up for faster, left or down for slower; further moves it quicker.</td></tr>
+      <tr><td>Right stick</td><td>Volume of the selected row's pad, the same way.</td></tr>
       <tr><td><kbd>SELECT</kbd>+<kbd>LEFT</kbd> <kbd>RIGHT</kbd></td><td>Step note down or up a semitone</td></tr>
       <tr><td><kbd>SELECT</kbd>+<kbd>L2</kbd> <kbd>R2</kbd></td><td>Step note down or up an octave</td></tr>
       <tr><td><kbd>SELECT</kbd>+<kbd class="face">A</kbd></td><td>Clear the row (asks first)</td></tr>
@@ -766,7 +772,9 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><kbd class="face">A</kbd></td><td>Open the folder, or put the file on the selected pad</td></tr>
       <tr><td><kbd class="face">X</kbd></td><td>Hear the file without loading it</td></tr>
       <tr><td><kbd class="face">Y</kbd></td><td>Load the folder's first sixteen sounds onto the bank on screen (asks first). On a file, it means the folder the file is in.</td></tr>
-      <tr><td><kbd class="face">B</kbd></td><td>Close</td></tr>
+      <tr><td><kbd>START</kbd></td><td>Start or stop the beat without leaving the picker</td></tr>
+      <tr><td><kbd>R1</kbd></td><td>"In the beat" on or off. When on, the file you are on stands in for the pad, with the pad's own settings, so the pattern plays it alongside the rest of the kit. Nothing is kept until you press <kbd class="face">A</kbd>.</td></tr>
+      <tr><td><kbd class="face">B</kbd></td><td>Close. The pad keeps the sound it had.</td></tr>
     </tbody>
   </table>
   </div>
