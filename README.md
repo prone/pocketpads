@@ -23,7 +23,9 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - Time-stretch: change a sample's length from half to double without changing its pitch, with drum hits kept on time
 - Fit a loop to the tempo by stretching (pitch kept) or repitching, spread one sound across all pads a semitone apart, resample the output to a pad
 - Loads WAV directly, and MP3, FLAC, OGG, M4A, AAC, AIFF and Opus through ffmpeg
-- A built-in starter kit that is synthesized on first run, so no sample files are shipped
+- A built-in starter kit that is synthesized on first run, so the app itself ships no sample files
+- Optional sounds in [`packs/`](packs/README.md): six generated kits and a set of 204 public-domain (CC0) recordings; install the ones you want
+- The sample browser plays a file before you pick it, and loads a whole folder onto the sixteen pads in one go
 - Four style starters (ambient, techno, house, hip hop), each a synthesized kit of sixteen sounds, seven or eight patterns and a full song chaining them; pick one under NEW on the PROJ page
 - The right analog stick works as a data wheel on the SOUND and PROJ pages
 
@@ -46,6 +48,8 @@ The manual is a single static page in [`site/`](site/index.html).
 4. Refresh the game list. PocketPads appears under Ports.
 
 `ffmpeg` (for MP3 and other compressed formats) and `arecord` (for the microphone) are already part of KNULLI.
+
+More sounds are optional: see [`packs/`](packs/README.md) for what there is and how to add it.
 
 ## Run on a computer
 
@@ -86,6 +90,7 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 | `pocketpads/styles.py` | The style starters: their sounds, patterns (written as text) and songs |
 | `pocketpads/art/` | The artwork and the script that draws it |
 | `pocketpads/tests/` | Engine tests |
+| `packs/` | Optional sounds, and the script that makes the generated ones |
 | `site/` | The manual |
 
 ## Tests

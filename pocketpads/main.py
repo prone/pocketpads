@@ -1504,6 +1504,16 @@ class App:
         elif b == "A" and kind == "dir":
             br["dir"] = os.path.join(br["dir"], name)
             self.browser_list()
+        elif b == "Y" and kind in ("dir", "wav"):
+            # A whole folder at once: the highlighted folder, or the one these files are in.
+            folder = os.path.join(br["dir"], name) if kind == "dir" else br["dir"]
+            count = len(self.folder_sounds(folder))
+            if not count:
+                self.say("NO SOUNDS IN THAT FOLDER")
+            else:
+                first = self.base() + 1
+                self.confirm = ("LOAD %d SOUNDS ONTO PADS %d-%d?" % (count, first, first + count - 1),
+                                lambda: self.load_folder(folder))
         elif b in ("A", "X") and kind == "wav":
             pad = self.eng.pads[self.sel]
             try:
@@ -1517,6 +1527,7 @@ class App:
                 self.eng.note_off(self.sel)
                 self.pending_bake = None
                 pad.load(path)
+                pad.name = self.sound_name(name)
                 pad.start, pad.end = 0.0, 1.0
                 pad.bake()
                 self.eng.trigger(self.sel)
@@ -1525,6 +1536,44 @@ class App:
                 self.say("PAD %d: %s" % (self.sel + 1, pad.name))
             except (OSError, ValueError) as e:
                 self.say("CAN'T LOAD: %s" % e, 3)
+
+    @staticmethod
+    def sound_name(path):
+        """A pad's name for a file: the file's own name, not that of the converted copy it may be played from."""
+        name = os.path.splitext(os.path.basename(path))[0].upper().replace("_", " ")
+        return (re.sub(r"^\d{1,2}[ -]+", "", name) or name)[:24]
+
+    @staticmethod
+    def folder_sounds(folder):
+        """The first sixteen sound files in a folder, in name order."""
+        try:
+            names = sorted(os.listdir(folder), key=str.lower)
+        except OSError:
+            return []
+        return [os.path.join(folder, n) for n in names
+                if not n.startswith(".") and n.lower().endswith((".wav",) + CONVERT_EXTS)][:BANK]
+
+    def load_folder(self, folder):
+        """Put a folder's sounds on the pads of the bank on screen, one each, from the first pad."""
+        self.pending_bake = None
+        first, done, failed = self.base(), 0, 0
+        for i, src in enumerate(self.folder_sounds(folder)):
+            pad = self.eng.pads[first + i]
+            try:
+                path = self.convert(src) if src.lower().endswith(CONVERT_EXTS) else src
+                self.eng.note_off(first + i)
+                pad.load(path)
+                pad.name = self.sound_name(src)
+                pad.start, pad.end = 0.0, 1.0
+                pad.bake()
+                done += 1
+            except (OSError, ValueError):
+                failed += 1
+        self.browser = None
+        prune_cache(self.eng.pads)
+        self.eng.refresh_variants()
+        self.say("%d SOUNDS FROM %s ON PADS %d-%d%s" % (done, os.path.basename(folder).upper()[:16], first + 1, first + max(1, done),
+                                                       ", %d WOULD NOT LOAD" % failed if failed else ""), 4)
 
     def convert(self, src):
         """Turn an MP3 (or other compressed file) into a WAV in samples/converted, once, and return its path."""
@@ -2155,7 +2204,7 @@ class App:
             self.text(label, 78, y + 10, "m", TEXT if kind == "wav" else TEAL)
             if kind == "wav" and not name.lower().endswith(".wav"):
                 self.text(os.path.splitext(name)[1][1:].upper(), 562, y + 10, "s", ORANGE, "r")
-        self.text("A choose    X preview    L2 R2 page    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+        self.text("A choose    X preview    Y whole folder onto the pads    B cancel", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
 
     # ------------------------------------------------------------ scripted testing
     def load_script(self):
