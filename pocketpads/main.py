@@ -2139,8 +2139,10 @@ class App:
             self.midi_held.clear()
         self.midi_seen = len(m.devices)
         for ev in m.poll():
-            if ev[0] == "note" and 0 <= ev[1] - midi.BASE_NOTE < NPADS:
-                pad = ev[1] - midi.BASE_NOTE
+            if ev[0] == "note":
+                # A controller plays the bank on screen: note 36 (C1) is the bank's first pad, and the sixteen
+                # pads repeat every sixteen notes, so a controller's own pads land on them wherever they start.
+                pad = self.base() + (ev[1] - midi.BASE_NOTE) % BANK
                 if not self.modal():                # a dialog names its pads: do not move them under it
                     if pad != self.sel:
                         self.flush_bake()

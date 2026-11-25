@@ -399,9 +399,9 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 
 <section id="midi">
   <h2>MIDI</h2>
-  <p>Plug a USB MIDI controller into the handheld and PocketPads connects to it by itself; the MIDI DEVICES row on the PROJ page shows what it found. This part is new and has not yet been tried with real hardware, so expect rough edges.</p>
+  <p>Plug a USB MIDI controller into the handheld and PocketPads connects to it by itself; the MIDI DEVICES row on the PROJ page shows what it found. This part is new and has been tried with one USB controller, pads only, so expect rough edges.</p>
   <ul>
-    <li><b>Pads and keys.</b> Notes from C1 (note 36) upward play pads 1 to 64, with velocity.</li>
+    <li><b>Pads and keys.</b> Notes play the sixteen pads of the bank on screen, with velocity: C1 (note 36) is the bank's first pad, and the pads repeat every sixteen notes. Change bank on the handheld and the controller follows.</li>
     <li><b>Knobs.</b> The first eight knobs you turn become, in the order you first turn them, the selected pad's volume, pitch, filter, delay, reverb, start, end and fade out. A message names the setting as you turn.</li>
     <li><b>MIDI out.</b> Choose a channel on the PROJ page and every pad that sounds also sends a note, with step notes included, so the sequencer can play an external synth. Clock, start and stop go out too, to keep other gear in time.</li>
     <li><b>Start and stop</b> from a controller start and stop the beat.</li>
@@ -486,7 +486,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 
   <div class="status">
     <h3>Where it stands</h3>
-    <p>This is an early version, tested on one TrimUI Smart Pro running KNULLI Scarab. Pads, the step grid, patterns, projects, the GrainBrick link, note repeat, per-pad filter, delay and reverb, choke groups and the performance effects, microphone recording, chopping, resampling, time-stretch, song mode, lo-fi, a master compressor, audio export and pad banks are all in. MIDI is in but untested with real controllers. Not built: Bluetooth MIDI, and naming projects.</p>
+    <p>This is an early version, tested on one TrimUI Smart Pro running KNULLI Scarab. Pads, the step grid, patterns, projects, the GrainBrick link, note repeat, per-pad filter, delay and reverb, choke groups and the performance effects, microphone recording, chopping, resampling, time-stretch, song mode, lo-fi, a master compressor, audio export and pad banks are all in. MIDI is in, tried so far with one USB controller's pads. Not built: Bluetooth MIDI, and naming projects.</p>
     <p>PocketPads is open source under the MIT licence. The code and install instructions are at <a href="https://github.com/prone/pocketpads">github.com/prone/pocketpads</a>.</p>
   </div>
 </section>

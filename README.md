@@ -15,7 +15,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - Lo-fi per pad (bit crush, sample-rate reduction) and a master compressor
 - Analog sticks play performance effects (filter, tempo bend, fade, echo, reverb, stutter, crush, pan, tape stop), with the effect for each direction chosen on the FX page
 - Export the song or pattern as a WAV file
-- MIDI through the ALSA sequencer: controllers play pads and turn knobs; pads send notes, clock, start and stop (new, not yet tried with real hardware)
+- MIDI through the ALSA sequencer: a controller's pads and keys play the bank of pads on screen and its knobs turn settings; pads send notes, clock, start and stop (new; tried with one USB controller, pads only)
 - Per pad: volume, pitch and fine tune, one-knob filter, trim, fades, reverse, choke group, delay and reverb sends, and one-shot, hold or loop play modes
 - Note repeat, MPC-style swing (50 to 75%), and hold-to-apply stutter, tape stop and filter sweeps on the whole mix
 - Sampling: record ten seconds from the built-in microphone and have it chopped onto the pads
@@ -103,7 +103,7 @@ Each prints a line ending in `OK` when it passes.
 - Changing a pad setting re-renders that pad's audio; on samples longer than a few seconds this waits until you stop adjusting.
 - Converting a long MP3 pauses the screen until it finishes.
 - Stretch works on samples up to 30 seconds and pauses briefly while it renders (about 0.16 s per second of audio on the Smart Pro).
-- MIDI has not been tried with real controllers yet, and Bluetooth MIDI devices are not connected automatically.
+- MIDI in has been tried with one USB controller, and only its pads; knobs, MIDI out and clock have not been tried with real gear. Bluetooth MIDI devices are not connected automatically.
 - Projects are numbered, not named.
 - An export is five minutes at most.
 - The MIDI clock is timed by the system clock, not the sound card, so gear synced to it can drift over a long song.
