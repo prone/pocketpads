@@ -53,7 +53,7 @@ def find_grainbrick():
 
 GB_DIR = find_grainbrick()
 SLOTS = 16
-KEY_CHORDS_MAX_SECONDS = 6           # KEY CHORDS bakes sixteen chords at once, so it takes shorter sounds than one CHORD
+KEY_CHORDS_MAX_SECONDS = 4           # KEY CHORDS bakes sixteen chords at once, so it takes shorter sounds than one CHORD
 
 BG, PANEL, LINE = (17, 18, 23), (30, 32, 40), (72, 76, 90)
 TEXT, DIM = (228, 229, 235), (128, 132, 148)
