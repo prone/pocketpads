@@ -23,9 +23,12 @@ jobs:
           PP_NOAUDIO: "1"
           PP_NOMIDI: "1"
         run: |
+          bad=""
           for t in engine effects sampler robustness styles midi new touch tablet; do
-            echo "== $t"; python pocketpads/tests/test_$t.py pocketpads
+            echo "== $t"; python pocketpads/tests/test_$t.py pocketpads > out.txt 2>&1 || bad="$bad $t"
+            tail -25 out.txt
           done
+          [ -z "$bad" ] || { echo "failed:$bad"; exit 1; }
       - name: Build
         shell: bash
         run: |

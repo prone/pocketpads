@@ -10,7 +10,7 @@ src = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path
 shots = sys.argv[2] if len(sys.argv) > 2 else None
 app = os.path.join(tempfile.mkdtemp(), "app")
 shutil.copytree(src, app, ignore=shutil.ignore_patterns("projects", "state.json", "samples", "_vendor", "*.log"))
-os.environ.update(SDL_VIDEODRIVER="dummy", PP_NOAUDIO="1", PP_NOMIDI="1", PP_SCRIPT="/dev/null", PP_UI="tablet")
+os.environ.update(SDL_VIDEODRIVER="dummy", PP_NOAUDIO="1", PP_NOMIDI="1", PP_SCRIPT=os.devnull, PP_UI="tablet")
 os.environ.setdefault("PP_WINDOW", "1210x834")
 sys.path.insert(0, app)
 import pygame, main, tablet

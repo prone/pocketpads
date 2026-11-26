@@ -8,7 +8,7 @@ import tempfile
 src = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(__file__), ".."))
 app = os.path.join(tempfile.mkdtemp(), "app")
 shutil.copytree(src, app, ignore=shutil.ignore_patterns("projects", "state.json", "samples", "_vendor", "*.log"))
-os.environ.update(SDL_VIDEODRIVER="dummy", PP_NOAUDIO="1", PP_NOMIDI="1", PP_WINDOW="2400x1080", PP_SCRIPT="/dev/null")
+os.environ.update(SDL_VIDEODRIVER="dummy", PP_NOAUDIO="1", PP_NOMIDI="1", PP_WINDOW="2400x1080", PP_SCRIPT=os.devnull)
 sys.path.insert(0, app)
 import pygame, main
 a = main.App(); e = a.eng
