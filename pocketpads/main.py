@@ -79,6 +79,8 @@ ANDROID = sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
 # Joystick button numbers as SDL gives them on Android, named by what is printed on the button.
 ANDROID_BUTTONS = {"0": "A", "1": "B", "2": "X", "3": "Y", "4": "select", "6": "start", "9": "l1", "10": "r1",
                    "11": "up", "12": "down", "13": "left", "14": "right", "15": "l2", "16": "r2"}
+# Joystick axes as SDL gives them on Android: left stick, right stick, then the two triggers.
+ANDROID_AXES = {0: "lx", 1: "ly", 2: "rx", 3: "ry", 4: "l2", 5: "r2"}
 
 _MIXED = {}
 
@@ -272,6 +274,10 @@ class App:
                 self.btn_names[const] = label
         self.trig_state = {}
         self.hat_state = set()
+        self.axes_seen = set()
+        # The joystick whose sticks we read: the one with buttons (not Android's tilt sensor).
+        pads = [j for j in self.joysticks if j.get_numbuttons() > 0]
+        self.joy_id = pads[0].get_instance_id() if pads else -1
 
     def handle_event(self, e):
         if e.type == pygame.QUIT:
@@ -316,6 +322,22 @@ class App:
             name = self.joy_map().get(str(e.button))
             if name:
                 self.button(name, down)
+        elif not self.controllers and ANDROID and e.type == pygame.JOYAXISMOTION:
+            if getattr(e, "instance_id", getattr(e, "joy", 0)) != self.joy_id:
+                return                              # Android also lists the tilt sensor as a joystick
+            if e.axis not in self.axes_seen and abs(e.value) > 0.5:
+                self.axes_seen.add(e.axis)
+                self.logline("jaxis %d seen: %.2f" % (e.axis, e.value))
+            stick = ANDROID_AXES.get(e.axis)
+            if stick in ("l2", "r2"):               # triggers that are axes: -1 at rest on some pads, 0 on others
+                down = e.value > 0.4
+                if self.trig_state.get(stick, False) != down:
+                    self.trig_state[stick] = down
+                    self.button(stick, down)
+            elif stick:
+                self.sticks[stick] = e.value
+                if stick == "rx":
+                    self.wheel = e.value
         elif not self.controllers and e.type == pygame.JOYHATMOTION:
             now = set()
             if e.value[0] < 0: now.add("left")

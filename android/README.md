@@ -1,8 +1,8 @@
 # Android build (experimental)
 
-PocketPads packaged as an Android app with [python-for-android](https://github.com/kivy/python-for-android) through Buildozer. Tried on one device, a Retroid Pocket 4 Pro (Android 13): the screens, the buttons, the built-in kit and sound work.
+PocketPads packaged as an Android app with [python-for-android](https://github.com/kivy/python-for-android) through Buildozer. Tried on one device, a Retroid Pocket 4 Pro (Android 13): the screens, the buttons, both sticks, the built-in kit and sound work.
 
-Not there yet: the analog sticks, MIDI and Bluetooth MIDI, the microphone, loading your own samples, and MP3 conversion.
+Not there yet: MIDI and Bluetooth MIDI, the microphone, loading your own samples, and MP3 conversion.
 
 ## Build
 
