@@ -8,7 +8,7 @@ Please include the device and system (for example "TrimUI Smart Pro, KNULLI Scar
 
 ## Making a change
 
-1. Run the tests before and after: `for t in engine effects sampler robustness styles midi new touch; do python pocketpads/tests/test_$t.py pocketpads; done`
+1. Run the tests before and after: `for t in engine effects sampler robustness styles midi new touch tablet; do python pocketpads/tests/test_$t.py pocketpads; done`
 2. If you change the engine, add a check to the tests for it.
 3. Keep the audio thread cheap. `Engine.render` runs every 11.6 ms on a slow ARM core: no per-sample Python loops, and no file access or large allocations there. The header of `engine.py` explains which thread may touch what.
 4. Screen changes can be checked without a device by running with `PP_WINDOW=1280x720` and, for repeatable checks, a `PP_SCRIPT` file of button presses that saves screenshots.

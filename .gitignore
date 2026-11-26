@@ -10,3 +10,6 @@ pocketpads/samples/
 pocketpads/state.json
 pocketpads/*.log
 pocketpads/_vendor/
+
+# iPad build: downloaded template and build output
+ios/.build/

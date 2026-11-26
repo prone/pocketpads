@@ -55,9 +55,8 @@ GB_DIR = find_grainbrick()
 SLOTS = 16
 KEY_CHORDS_MAX_SECONDS = 4           # KEY CHORDS bakes sixteen chords at once, so it takes shorter sounds than one CHORD
 
-BG, PANEL, LINE = (17, 18, 23), (30, 32, 40), (72, 76, 90)
-TEXT, DIM = (228, 229, 235), (128, 132, 148)
-TEAL, ORANGE, RED, DARK = (62, 205, 182), (255, 152, 62), (236, 84, 84), (10, 11, 14)
+from theme import BG, DARK, DIM, LINE, ORANGE, PANEL, RED, TEAL, TEXT, mix
+from tablet import Tablet
 
 DIRS = ("up", "down", "left", "right")
 TOUCH_W = 110                       # width of each strip of on-screen buttons, in the pages' units
@@ -77,6 +76,9 @@ PAD_BUTTONS = {"a": "B", "b": "A", "x": "Y", "y": "X", "leftshoulder": "l1", "ri
 
 
 ANDROID = sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
+IOS = sys.platform == "ios"
+# Where the log goes: beside the program, except where that folder cannot be written to.
+LOG_DIR = DATA_DIR if IOS else APP_DIR
 # Joystick button numbers as SDL gives them on Android, named by what is printed on the button.
 ANDROID_BUTTONS = {"0": "A", "1": "B", "2": "X", "3": "Y", "4": "select", "6": "start", "9": "l1", "10": "r1",
                    "11": "up", "12": "down", "13": "left", "14": "right", "15": "l2", "16": "r2"}
@@ -88,20 +90,6 @@ ANDROID_AXES = {0: "lx", 1: "ly", 2: "rx", 3: "ry", 4: "l2", 5: "r2"}
 _EXT = os.environ.get("EXTERNAL_STORAGE", "/sdcard")
 SHARED = os.path.join(_EXT, "Music", "PocketPads") if ANDROID else None
 SHARED_OLD = os.path.join(_EXT, "PocketPads") if ANDROID else None     # where earlier builds looked
-
-_MIXED = {}
-
-
-def mix(a, b, t):
-    """Blend two colours. Remembered, because the pages ask for the same few blends every frame."""
-    key = (a, b, t)
-    c = _MIXED.get(key)
-    if c is None:
-        if len(_MIXED) > 2000:
-            _MIXED.clear()
-        c = _MIXED[key] = tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
-    return c
-
 
 class AndroidRecorder:
     """Stands in for the arecord process on Android: the recording itself is done by PPAudio.java."""
@@ -125,9 +113,16 @@ class AndroidRecorder:
         self.java.recordStop()
 
 
-class App:
+class App(Tablet):
+    PAGE_NAMES = PAGES
+    STRETCH_LIMIT = STRETCH_MAX_SECONDS
+
     def __init__(self):
-        self.log = open(os.path.join(APP_DIR, "pocketpads.log"), "w", buffering=1)
+        # The tablet layout (tablet.py): worked by touch alone. The iPad's; PP_UI=tablet tries it anywhere.
+        self.tablet = (IOS or os.environ.get("PP_UI") == "tablet") and os.environ.get("PP_UI") != "handheld"
+        self.dy = 0                     # how far down what is being described is moved (see area, box, text)
+        self.tablet_init()
+        self.log = open(os.path.join(LOG_DIR, "pocketpads.log"), "w", buffering=1)
         pygame.display.init()
         pygame.font.init()
         pygame.joystick.init()
@@ -267,8 +262,11 @@ class App:
         self.u = min(w / float(wide), h / 360.0)
         self.ox = left + (w - 640 * self.u) / 2
         self.oy = top + (h - 360 * self.u) / 2
+        self.LH, self.dlg_dy = 360.0, 0             # the page's height in its own units; see tablet.py
+        if self.tablet:
+            self.tablet_lay_out(left, top, w, h)
         self.fonts = {k: pygame.font.Font(None, max(8, int(s * self.u)))
-                      for k, s in (("s", 13), ("h", 16), ("m", 17), ("l", 26), ("xl", 40))}
+                      for k, s in (("t", 11), ("s", 13), ("h", 16), ("m", 17), ("l", 26), ("xl", 40))}
         self.cache = {}
         self.geom, self.waves, self.hint_rows, self.frame = {}, {}, {}, []
 
@@ -386,7 +384,7 @@ class App:
         elif e.type == pygame.FINGERUP:
             self.touch_up(e.finger_id)
         elif e.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
-            if not getattr(e, "touch", False) and not ANDROID:      # a real mouse; a finger already came as FINGER events
+            if not getattr(e, "touch", False) and not ANDROID and not IOS:      # a real mouse; a finger already came as FINGER events
                 if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                     self.touch_down("mouse", *e.pos)
                 elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
@@ -514,6 +512,8 @@ class App:
         self.button(name, False)
 
     def touch_down(self, finger, px, py):
+        if self.tablet:
+            return self.tablet_down(finger, px, py)
         if not self.touch_ui and not self.real_buttons and os.environ.get("PP_TOUCH") != "0":
             # The first touch on a device where no button has been pressed: bring up the on-screen buttons.
             # The page shrinks to make room, so this touch only does that.
@@ -534,6 +534,8 @@ class App:
 
     def touch_move(self, finger, px, py):
         """A finger sliding across the on-screen buttons moves from one to the next, as a thumb does on a d-pad."""
+        if self.tablet:
+            return self.tablet_move(finger, px, py)
         old = self.touches.get(finger)
         if old is None or not self.touch_ui or old not in self.TOUCH_SLIDE:
             return
@@ -547,6 +549,8 @@ class App:
     TOUCH_SLIDE = ("up", "down", "left", "right")
 
     def touch_up(self, finger):
+        if self.tablet:
+            return self.tablet_up(finger)
         name = self.touches.pop(finger, None)
         if name:
             self.button(name, False)
@@ -2324,11 +2328,11 @@ class App:
         """Start a new area of the frame. An area is redrawn only when its drawing steps change."""
         self.breathe()
         self.ops = []
-        self.areas.append(((x, y, w, h), self.ops))
+        self.areas.append(((x, y + self.dy, w, h), self.ops))
 
     def box(self, x, y, w, h, fill=None, border=None, radius=3, bw=1):
         if self.ops is not None:        # describing a frame: note the step, draw later if needed
-            self.ops.append((self._box, x, y, w, h, fill, border, radius, bw))
+            self.ops.append((self._box, x, y + self.dy, w, h, fill, border, radius, bw))
         else:
             self._box(x, y, w, h, fill, border, radius, bw)
 
@@ -2346,7 +2350,7 @@ class App:
 
     def text(self, s, x, y, font="m", color=TEXT, align="l"):
         if self.ops is not None:
-            self.ops.append((self._text, s, x, y, font, color, align))
+            self.ops.append((self._text, s, x, y + self.dy, font, color, align))
         else:
             self._text(s, x, y, font, color, align)
 
@@ -2373,7 +2377,8 @@ class App:
             fn(*key)
 
     def wave(self, pad, x, y, w, h, color, trim=False):
-        self.custom(self._wave, pad, x, y, w, h, color, trim, id(pad.raw), pad.start, pad.end)
+        self.custom(self._wave, pad, x, y + (self.dy if self.ops is not None else 0), w, h, color, trim,
+                    id(pad.raw), pad.start, pad.end)
 
     def _wave(self, pad, x, y, w, h, color, trim, *_):
         if pad.peaks is None:
@@ -2420,9 +2425,13 @@ class App:
         """Describe the frame as areas of drawing steps, then redraw only the areas that changed."""
         self.areas = []
         try:
-            self.describe()
+            if self.tablet:
+                self.tablet_describe()
+            else:
+                self.describe()
         finally:
             self.ops = None
+            self.dy = 0
         old, new = self.frame, self.areas
         over = new[-2][1]                               # dialogs and lists lie on top of everything
         same_layout = len(old) == len(new) and all(a[0] == b[0] for a, b in zip(old, new))
@@ -2501,6 +2510,10 @@ class App:
             self.draw_touch()
         self.area(0, 29, 640, 301)
         getattr(self, "draw_" + PAGES[self.page].lower())()
+        self.describe_over()
+
+    def describe_over(self, toast_dy=None):
+        """What lies on top of the page: lists and dialogs, then the message strip (moved by toast_dy, if given)."""
         self.area(0, 0, 0, 0)                           # on top: lists, dialogs, messages (not clipped)
         if self.browser:
             self.draw_browser()
@@ -2528,7 +2541,7 @@ class App:
             self.text("LIVE CHOP", 36, 80, "l", ORANGE)
             self.text("%d of %d slice points" % (len(lv["marks"]), BANK), 604, 81, "m", TEXT, "r")
             self.box(36, 100, 568, 150, DARK, LINE, 4)
-            self.custom(self._live_wave, lv["peaks"], pos)
+            self.custom(self._live_wave, lv["peaks"], pos, self.dy)
             for k, m in enumerate(lv["marks"]):
                 self.box(38 + m * 564, 100, 1.5, 150, ORANGE, None, 0)
                 self.text(str(k + 1), 41 + m * 564, 108, "s", ORANGE)
@@ -2570,6 +2583,8 @@ class App:
             for i, line in enumerate(lines[:2]):
                 self.text(line, 320, 162 + (i - (len(lines[:2]) - 1) / 2) * 20, "m", TEXT, "c")
             self.text("A = YES     B = NO", 320, 198 if len(lines) > 1 else 192, "m", ORANGE, "c")
+        if toast_dy is not None:
+            self.dy = toast_dy
         self.area(120, 300, 400, 24)                    # last: the message strip (see draw)
         if time.time() < self.toast_until:
             self.box(120, 300, 400, 24, ORANGE, None, 4)
@@ -2583,13 +2598,13 @@ class App:
         s = self.S(6)
         pygame.draw.polygon(self.screen, TEAL, [(cx - s, cy - s), (cx - s, cy + s), (cx + s, cy)])
 
-    def _live_wave(self, peaks, pos):
+    def _live_wave(self, peaks, pos, dy=0):
         cols = len(peaks)
         for i in range(cols):
             f = i / cols
             px = int(self.ox + (38 + f * 564) * self.u)
             a = max(1, int(peaks[i] * 70 * self.u))
-            mid = int(self.oy + 175 * self.u)
+            mid = int(self.oy + (175 + dy) * self.u)
             pygame.draw.line(self.screen, TEAL if f <= pos else LINE, (px, mid - a), (px, mid + a), max(1, self.S(1.2)))
 
     @staticmethod
@@ -3240,7 +3255,7 @@ if __name__ == "__main__":
     try:
         sys.exit(App().run())
     except Exception:
-        with open(os.path.join(APP_DIR, "pocketpads_crash.log"), "w") as f:
+        with open(os.path.join(LOG_DIR, "pocketpads_crash.log"), "w") as f:
             traceback.print_exc(file=f)
         traceback.print_exc()
         sys.exit(1)

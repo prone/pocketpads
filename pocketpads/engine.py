@@ -32,6 +32,7 @@ import os
 import shutil
 import re
 import struct
+import sys
 import threading
 import time
 import traceback
@@ -71,6 +72,10 @@ if "ANDROID_ARGUMENT" in os.environ and os.environ.get("ANDROID_PRIVATE"):
                     shutil.copy2(_old, DATA_DIR)
             except OSError:
                 pass
+elif sys.platform == "ios":
+    # The program's folder is read-only on an iPad; Documents is the app's own, and shows in the Files app.
+    DATA_DIR = os.path.join(os.path.expanduser("~"), "Documents")
+    os.makedirs(DATA_DIR, exist_ok=True)
 else:
     DATA_DIR = APP_DIR
 _RAMP = np.linspace(1.0, 0.0, FADE, dtype=np.float32)
@@ -1110,6 +1115,8 @@ class Engine:
         except ImportError:
             pass
         cands += ["libSDL2-2.0.so.0", "libSDL2.so", "libSDL2.dylib"]
+        if sys.platform == "ios":                   # SDL is a framework inside the app there
+            cands = [os.path.join(os.path.dirname(sys.executable), "Frameworks", "SDL2.framework", "SDL2"), None]
         sdl = None
         for c in cands:
             try:

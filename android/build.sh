@@ -10,6 +10,8 @@ if [ "${1:-debug}" = "release" ]; then
   FILE="${PP_SIGNING:-$HOME/.config/pocketpads/signing.env}"
   [ -f "$FILE" ] || { echo "no signing settings at $FILE" >&2; exit 1; }
   SIGN=$(grep '^P4A_RELEASE_' "$FILE" | tr '\n' ' ')
+  # `./build.sh release apk` makes a signed APK instead, for installing directly without the Play Store.
+  [ "$2" = "apk" ] && SIGN="$SIGN APP_ANDROID_RELEASE_ARTIFACT=apk"
 fi
 # A clean environment: Buildozer prints every variable it was started with into its log. With a release that
 # includes the key's password, so the password is blanked on the way out.
