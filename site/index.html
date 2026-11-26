@@ -6,7 +6,7 @@
 <title>PocketPads</title>
 <link rel="icon" type="image/png" href="img/favicon.png">
 <link rel="apple-touch-icon" href="img/touch-icon.png">
-<meta name="description" content="PocketPads is a 64-pad sample sequencer for the TrimUI Smart Pro: make beats, sample anything, build songs and perform them. Open source.">
+<meta name="description" content="PocketPads is a 64-pad sample sequencer that runs on handhelds, Android, iPad, Windows and Mac: make beats, sample anything, build songs and perform them. Open source.">
 <style>
 @font-face {
   font-family: "Bricolage";
@@ -121,10 +121,31 @@ code { font: 0.92em var(--mono); background: var(--paper-deep); padding: 0.1em 0
 .cols > *, .page > *, .hero > * { min-width: 0; }
 .status { background: var(--paper-deep); border-radius: 0.9rem; padding: 2rem 2.2rem; margin-top: 1.5rem; }
 .status .btns { margin-top: 1.4rem; }
+
+/* ---------- where it runs ---------- */
+.runs { list-style: none; padding: 0; margin: 0.9rem 0 0; display: flex; flex-wrap: wrap; gap: 0.4rem; max-width: 30rem; }
+.runs li { margin: 0; font: 700 0.9rem/1 var(--display); letter-spacing: 0.01em; padding: 0.45rem 0.65rem; border-radius: 5px; box-shadow: inset 0 0 0 1.5px var(--ink); }
+.plats { margin: 2.25rem 0 0; border-top: 2px solid var(--ink); }
+.plat { display: grid; grid-template-columns: 13rem minmax(0, 1fr) 15rem; gap: 2rem; padding: 1.5rem 0; border-bottom: 1px solid var(--rule); align-items: start; }
+.plat h3 { margin: 0; }
+.alpha { display: inline-block; vertical-align: 0.25em; margin-left: 0.4rem; font: 700 0.72rem/1 var(--body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--orange); box-shadow: inset 0 0 0 1.5px var(--orange); padding: 0.25rem 0.4rem; border-radius: 4px; }
+.plat .kind { display: block; color: var(--ink-soft); font-size: 0.92rem; margin-top: 0.3rem; }
+.plat p { margin: 0 0 0.6rem; }
+.plat p:last-child { margin-bottom: 0; }
+.plat .tried { color: var(--ink-soft); font-size: 0.92rem; }
+.plat .btn { margin-top: 0; }
+.plat .get { font-size: 0.95rem; }
+.plat .get small { display: block; color: var(--ink-soft); font-size: 0.86rem; margin-top: 0.5rem; }
+.plat details { margin: 0.4rem 0 0.7rem; font-size: 0.95rem; }
+.plat summary { cursor: pointer; color: var(--orange); font-weight: 600; }
+.plat details ol { margin: 0.6rem 0 0; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 2.5rem; align-items: start; }
+.two > * { min-width: 0; }
 footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--rule); color: var(--ink-soft); font-size: 0.92rem; }
 
 @media (max-width: 860px) {
-  .hero, .page, .page:nth-of-type(even), .cols { grid-template-columns: 1fr; }
+  .hero, .page, .page:nth-of-type(even), .cols, .two { grid-template-columns: 1fr; }
+  .plat { grid-template-columns: 1fr; gap: 0.8rem; }
   .page:nth-of-type(even) .screen { order: 0; }
   .hero { gap: 2rem; padding-top: 2.5rem; }
   .hero .screen { transform: none; }
@@ -145,6 +166,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 <nav class="nav" aria-label="Sections">
   <div class="nav-inner">
     <strong>PocketPads</strong>
+    <a href="#get">Get it</a>
     <a href="#how">How it works</a>
     <a href="#does">What you can do</a>
     <a href="#grainbrick">GrainBrick</a>
@@ -158,15 +180,99 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 <header class="hero">
   <div>
     <h1>Pocket&shy;Pads</h1>
-    <p class="lede">A 64-pad sample sequencer for the TrimUI Smart Pro. Put sounds on pads, tap out a beat, and build it into patterns.</p>
-    <p class="meta">Runs from the Ports menu under KNULLI. It records and chops its own samples, and can also import them from GrainBrick.</p>
-    <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads">View project on GitHub</a> <a class="btn alt" href="guide.html">Read the full guide</a></p>
+    <p class="lede">A 64-pad sample sequencer for the device you already have. Put sounds on pads, tap out a beat, and build it into a song.</p>
+    <p class="meta">One instrument, the same on every device, and free and open source. It runs on:</p>
+    <ul class="runs" aria-label="Where PocketPads runs">
+      <li>Handhelds</li><li>Android</li><li>iPad</li><li>Windows</li><li>Mac</li>
+    </ul>
+    <p class="btns" style="margin-top:1.5rem"><a class="btn" href="#get">Get PocketPads</a> <a class="btn alt" href="guide.html">Read the full guide</a></p>
     <img class="art" src="img/art.png" width="960" height="720" alt="PocketPads menu artwork: a pixel-art drum sampler with sixteen pads.">
   </div>
   <figure class="screen">
-    <img src="img/play.png" width="1280" height="720" alt="PocketPads PLAY page: a four-by-four grid of pads on the left, the selected pad's waveform and settings on the right.">
+    <img src="img/touch-beat.png" width="1210" height="834" alt="PocketPads BEAT page in the touch layout: sixteen rows of steps to draw a beat on, with tabs, patterns, tempo and transport along the top.">
   </figure>
 </header>
+
+<section id="get">
+  <h2>Runs on what you have</h2>
+  <p>PocketPads began on a pocket games handheld and now runs on phones, tablets and computers too. It is the same program everywhere, with the same pads, patterns and projects. Only the way you play it changes: buttons and sticks on a handheld, your fingers on a touch screen, the mouse on a computer.</p>
+
+  <div class="two">
+    <figure class="screen">
+      <img src="img/play.png" width="1280" height="720" loading="lazy" alt="The PLAY page as a handheld shows it: sixteen pads on the left, the selected pad's waveform and settings on the right, button hints along the bottom.">
+      <figcaption>With buttons: handhelds, and Android devices that have controls.</figcaption>
+    </figure>
+    <figure class="screen">
+      <img src="img/touch-play.png" width="1210" height="834" loading="lazy" alt="The PLAY page in the touch layout: sixteen large pads, a row of tabs and transport buttons along the top, and twelve knobs for the selected pad.">
+      <figcaption>By touch or mouse: iPad, Windows and Mac.</figcaption>
+    </figure>
+  </div>
+
+  <div class="plats">
+    <div class="plat">
+      <div><h3>Handhelds</h3><span class="kind">TrimUI Smart Pro, running KNULLI</span></div>
+      <div>
+        <p>Where PocketPads started, and the version with the most hours on it. Everything is worked from the buttons, triggers and sticks, and it launches from the Ports menu.</p>
+        <p class="tried">Tried on one TrimUI Smart Pro. This is the most used version.</p>
+      </div>
+      <div class="get"><a class="btn" href="https://github.com/prone/pocketpads/releases/download/v0.5/PocketPads-0.5-handheld.zip">Download for TrimUI</a><small>Zip file, 0.1 MB. <a href="guide.html#m-install">How to install it</a>: it also needs NumPy, as the steps say.</small></div>
+    </div>
+    <div class="plat">
+      <div><h3>Android <span class="alpha">Alpha</span></h3><span class="kind">Phones, tablets and Android handhelds</span></div>
+      <div>
+        <p>On a handheld with built-in controls it uses them. On a phone or tablet, on-screen buttons appear at the first touch. It is not in the Play Store: you install the file yourself.</p>
+        <details><summary>How to install it</summary>
+          <ol>
+            <li>Download the file on the Android device and open it.</li>
+            <li>Android asks whether your browser or file manager may install apps. Allow it, then choose Install.</li>
+            <li>Open PocketPads. Your own sounds go in <code>Music/PocketPads</code>.</li>
+          </ol>
+        </details>
+        <p class="tried">Needs Android 7 or newer on a 64-bit ARM device. Tried on one Retroid Pocket 4 Pro.</p>
+      </div>
+      <div class="get"><a class="btn" href="https://github.com/prone/pocketpads/releases/download/v0.5/PocketPads-0.5-android.apk">Download for Android</a><small>APK file, 24 MB</small></div>
+    </div>
+    <div class="plat">
+      <div><h3>Windows <span class="alpha">Alpha</span></h3><span class="kind">Desktop and laptop PCs</span></div>
+      <div>
+        <p>Opens in a window with the touch layout, so every pad, knob and step can be clicked or dragged. Sound, MIDI controllers, microphone recording and MP3 files are all in it.</p>
+        <details><summary>How to install it</summary>
+          <ol>
+            <li>Download the zip file and extract all of it to a folder.</li>
+            <li>Open <code>PocketPads.exe</code> in that folder. Windows may say it protected your PC, because the app is not signed: choose More info, then Run anyway.</li>
+            <li>Your projects and sounds are kept in <code>Music\PocketPads</code>.</li>
+          </ol>
+        </details>
+        <p class="tried">The least tried version. It is built and tested automatically on a Windows machine, where it starts and its tests pass, but nobody has yet played it on a real PC.</p>
+      </div>
+      <div class="get"><a class="btn" href="https://github.com/prone/pocketpads/releases/download/v0.5/PocketPads-0.5-windows.zip">Download for Windows</a><small>Zip file, 29 MB</small></div>
+    </div>
+    <div class="plat">
+      <div><h3>iPad</h3><span class="kind">Made for touch</span></div>
+      <div>
+        <p>The touch layout was designed here: large pads for your fingers, knobs you drag, a step grid you draw on, and squares to slide a finger around in place of the sticks.</p>
+        <details><summary>How to install it</summary>
+          <ol>
+            <li>It is not in the App Store, so it is installed with a sideloading tool: <a href="https://sideloadly.io/">Sideloadly</a>, <a href="https://altstore.io/">AltStore</a> or <a href="https://sidestore.io/">SideStore</a>.</li>
+            <li>Download the file, open it in that tool and follow its steps. It signs the app with your own Apple account.</li>
+            <li>With a free Apple account the app has to be renewed every seven days; the tool can do that for you.</li>
+          </ol>
+        </details>
+        <p class="tried">Tried on one iPad Pro 13-inch, installed from Xcode. Or <a href="https://github.com/prone/pocketpads/tree/main/ios">build it yourself with Xcode</a>.</p>
+      </div>
+      <div class="get"><a class="btn" href="https://github.com/prone/pocketpads/releases/download/v0.5/PocketPads-0.5-ipad.ipa">Download for iPad</a><small>IPA file for sideloading, 30 MB</small></div>
+    </div>
+    <div class="plat">
+      <div><h3>Mac</h3><span class="kind">MacBooks and desktop Macs</span></div>
+      <div>
+        <p>The same touch layout in a window, worked with the trackpad or mouse. USB and Bluetooth MIDI controllers can be plugged in at any time.</p>
+        <p class="tried">Tried on one MacBook with Apple silicon. A ready-made download is on the way.</p>
+      </div>
+      <div class="get"><a href="https://github.com/prone/pocketpads/tree/main/desktop">Build it with a script</a><small>The notes are on GitHub.</small></div>
+    </div>
+  </div>
+  <p style="margin-top:1.5rem">The Android and Windows versions are alpha versions: they are new and little tried, so expect rough edges. Whatever you play it on, please <a href="https://github.com/prone/pocketpads/issues">report what you find</a>. None of them uses the internet or collects anything: see the <a href="privacy.html">privacy policy</a>.</p>
+</section>
 
 <section id="how">
   <h2>How it works</h2>
@@ -181,7 +287,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 
 <section id="does">
   <h2>What you can do with it</h2>
-  <p>Four things, roughly in the order you would meet them. Each links to a short tutorial in the <a href="guide.html">full guide</a>.</p>
+  <p>Four things, roughly in the order you would meet them. Each links to a short tutorial in the <a href="guide.html">full guide</a>. The pictures and the guide show the handheld's screens and buttons; the touch layout has the same six pages and the same controls, laid out for fingers.</p>
 
   <div class="page">
     <figure class="screen">
@@ -191,7 +297,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <div>
       <span class="tab">Make beats</span>
       <h3>Draw a beat, or play it in</h3>
-      <p>Fill in steps on a grid, or hold a trigger and finger-drum on the buttons while it records. Accents, swing and note repeat give it feel, and any step can carry its own note, so one pad can play a bass line.</p>
+      <p>Fill in steps on a grid, or switch record on and finger-drum on the buttons or the screen. Accents, swing and note repeat give it feel, and any step can carry its own note, so one pad can play a bass line.</p>
       <p><a href="guide.html#t-beat">Draw a beat</a> · <a href="guide.html#t-drum">Play a beat in by hand</a> · <a href="guide.html#t-bass">Write a bass line</a></p>
     </div>
   </div>
@@ -204,7 +310,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <div>
       <span class="tab">Sample</span>
       <h3>Use any sound</h3>
-      <p>Record ten seconds with the built-in microphone and it is cut onto the pads for you. Load your own WAV or MP3 files, chop loops into pieces, stretch them to the tempo, pitch them, filter them and make them gritty. Optional sound packs add six kits and 204 public-domain recordings.</p>
+      <p>Record ten seconds with the microphone and it is cut onto the pads for you. Load your own WAV or MP3 files, chop loops into pieces, stretch them to the tempo, pitch them, filter them and make them gritty. Optional sound packs add six kits and 204 public-domain recordings.</p>
       <p><a href="guide.html#t-sounds">Load your own sounds</a> · <a href="guide.html#t-mic">Record with the microphone</a> · <a href="guide.html#t-chop">Chop a loop</a></p>
     </div>
   </div>
@@ -230,7 +336,7 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     <div>
       <span class="tab">Perform</span>
       <h3>Play the mix itself</h3>
-      <p>Hold a button to stutter the beat, stop it like a tape or sweep a filter across it, and push the two sticks for filter, tempo, echo and more. Record the result back onto a pad. A USB or Bluetooth MIDI controller plays the pads and turns their settings.</p>
+      <p>Hold a button to stutter the beat, stop it like a tape or sweep a filter across it, and push the two sticks, or slide a finger, for filter, tempo, echo and more. Record the result back onto a pad. A USB or Bluetooth MIDI controller plays the pads and turns their settings.</p>
       <p><a href="guide.html#t-perform">Perform with effects</a> · <a href="guide.html#t-midi">Use a MIDI controller</a></p>
     </div>
   </div>
@@ -238,45 +344,16 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
 
 <section id="grainbrick">
   <h2>Works with GrainBrick</h2>
-  <p>GrainBrick is a separate, free granular sampler for the same handheld. PocketPads can hop over to it and back, and import the slices you make there straight onto the pads. GrainBrick itself is not modified. <a href="guide.html#t-grainbrick">How the two work together</a>.</p>
-</section>
-
-<section id="android">
-  <h2>Try it on Android</h2>
-  <p>There is an experimental Android version you can install yourself. It is the same app: on a handheld with built-in controls it uses them, and on a phone or tablet on-screen buttons appear at the first touch. It is not in the Play Store.</p>
-  <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads/releases/download/v0.5/PocketPads-0.5-android.apk">Download the Android app (24 MB)</a></p>
-  <ol>
-    <li>Download the file on the Android device and open it.</li>
-    <li>Android asks whether your browser or file manager may install apps. Allow it, then choose Install.</li>
-    <li>Open PocketPads. Your own sounds go in <code>Music/PocketPads</code>.</li>
-  </ol>
-  <p>It needs Android 7 or newer on a 64-bit ARM device, which covers most phones and handhelds made since about 2017. It has been tested on one device, a Retroid Pocket 4 Pro, so expect rough edges and <a href="https://github.com/prone/pocketpads/issues">report what you find</a>. The app cannot use the internet and collects nothing: see the <a href="privacy.html">privacy policy</a>.</p>
-</section>
-
-<section id="windows">
-  <h2>Try it on Windows</h2>
-  <p>There is an experimental Windows version too. It opens in a window with a layout made for touch, so every pad, knob and step can be clicked or dragged with the mouse. Sound, MIDI controllers, recording from the microphone and MP3 files are all in it.</p>
-  <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads/releases/download/v0.5/PocketPads-0.5-windows.zip">Download for Windows (29 MB)</a></p>
-  <ol>
-    <li>Download the zip file and extract all of it to a folder.</li>
-    <li>Open <code>PocketPads.exe</code> in that folder. Windows may say it protected your PC, because the app is not signed: choose More info, then Run anyway.</li>
-    <li>Your projects and sounds are kept in <code>Music\PocketPads</code>.</li>
-  </ol>
-  <p>Be warned that this one is the least tried of all. It is built and tested automatically on a Windows machine, where its tests pass and it starts, but nobody has yet played it on a real PC. Please <a href="https://github.com/prone/pocketpads/issues">report what you find</a>.</p>
-</section>
-
-<section id="apple">
-  <h2>iPad and Mac</h2>
-  <p>PocketPads also runs on the iPad, with the same touch layout, and on the Mac in a window. There is no download for either yet: for now you build them yourself with Xcode or a script, following the notes for the <a href="https://github.com/prone/pocketpads/tree/main/ios">iPad</a> and the <a href="https://github.com/prone/pocketpads/tree/main/desktop">Mac</a>. Each has been tried on one device.</p>
+  <p>GrainBrick is a separate, free granular sampler for the TrimUI Smart Pro. On that handheld, PocketPads can hop over to it and back, and import the slices you make there straight onto the pads. GrainBrick itself is not modified. <a href="guide.html#t-grainbrick">How the two work together</a>.</p>
 </section>
 
 <section id="status">
   <h2>Where it stands</h2>
   <div class="status">
-    <p>This is an early version, 0.5, made for and tested on one TrimUI Smart Pro running KNULLI Scarab. The Android, Windows, iPad and Mac versions are newer and less tried. Everything on this page is built and working. MIDI has been tried with one USB controller's pads and with two M-Vave pad controllers over Bluetooth.</p>
+    <p>This is an early version, 0.5. Everything on this page is built and working, but each version has been tried on one device at most, and the Windows one on no real PC yet, as <a href="#get">listed above</a>; the handheld's has had by far the most use. MIDI has been tried with one USB controller's pads and with two M-Vave pad controllers over Bluetooth, on the handheld.</p>
     <p>PocketPads is open source under the MIT licence. It is written in Python, with pygame for the screen and buttons and NumPy for the audio.</p>
-    <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads">View project on GitHub</a> <a class="btn alt" href="guide.html">Read the full guide</a></p>
-    <p style="margin:1.1rem 0 0">Install steps are in the <a href="guide.html#m-install">guide</a> and the <a href="https://github.com/prone/pocketpads#readme">README</a>.</p>
+    <p class="btns"><a class="btn" href="#get">Get PocketPads</a> <a class="btn alt" href="https://github.com/prone/pocketpads">View project on GitHub</a></p>
+    <p style="margin:1.1rem 0 0">Downloads and install steps for each device are <a href="#get">above</a>; the <a href="https://github.com/prone/pocketpads#readme">README</a> has the details.</p>
   </div>
 </section>
 
