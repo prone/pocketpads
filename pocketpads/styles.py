@@ -21,10 +21,10 @@ from kit import _hp, _lp, _metal, _sweep, _t
 
 STYLES_VERSION = "1"
 ORDER = ["AMBIENT", "TECHNO", "HOUSE", "HIP HOP"]
-ABOUT = {"AMBIENT": "72 BPM, slow pads, bells and a soft pulse",
-         "TECHNO": "132 BPM, driving kick, rolling bass, acid line",
-         "HOUSE": "124 BPM, four on the floor, chords, organ hook",
-         "HIP HOP": "88 BPM, swung boom bap, dusty keys, long 808"}
+ABOUT = {"AMBIENT": "slow pads, bells, drones and a soft pulse",
+         "TECHNO": "driving kick, rolling bass, acid line, stabs",
+         "HOUSE": "four on the floor, chords, organ, piano",
+         "HIP HOP": "swung drums, dusty keys, long 808"}
 TAU = 2 * np.pi
 
 
@@ -420,6 +420,309 @@ STYLES = {
         "song": "ABCCDDEFFDG",
     },
 }
+# ---------------------------------------------------------------- more songs
+# Every style has several songs for the one kit. A song is a name, a line about it, patterns and a chain, and
+# may set its own tempo and swing. The first of each style is the one written out in STYLES above.
+def _r(bars=1):
+    """Bars of rest in a row of notes."""
+    return " ".join(["."] * 16 * bars)
+
+
+def _one(value, at=0):
+    """A bar with one note in it."""
+    cells = ["."] * 16
+    cells[at] = str(value)
+    return " ".join(cells)
+
+
+def _oct(n):
+    """A bar of bass bouncing between a note and its octave."""
+    return " ".join(["%d . %d ." % (n, n + 12)] * 4)
+
+
+_LONG = "x" + "." * 63                      # one hit that rings for a four-bar pattern
+_FOUR = "x...x...x...x..."                 # kick on every beat
+_OFF = "..x...x...x...x."                  # the off beats
+_BACK = "....x.......x..."                 # beats two and four
+_ROLL = "." * 48 + "x...x...x.x.xxxx"      # a fill across the last bar of four
+
+# Ambient is in D minor: PAD MIN is D minor, PAD MAJ is B flat (2 up is C, 5 down is F).
+_TIDE_PADS = {"PAD MIN": _bars(_one(0), _one(5), _r(2)), "PAD MAJ": _bars(_r(2), _one(0), _one(2))}
+_TIDE_BELL = _bars("7 . . . . . . . 3 . . . . . . .", "8 . . . . . . . 5 . . . . . . .",
+                   "12 . . . . . . . . . 8 . . . . .", "10 . . . . . 7 . . . . . 5 . . .")
+_TIDE_KEYS = _bars(". . 0 . . . 7 . . . 12 . . . . .", ". . 5 . . . 8 . . . 12 . . . . .",
+                   ". . -4 . . . 3 . . . 8 . . . . .", ". . -2 . . . 2 . . . 7 . . . . .")
+_TIDE_GLASS = _bars(_one(0, 8), _one(-2, 8), _one(5, 8), _one(3, 8))
+_TIDE_SUB = _bars(_one(0), _r(), _one(-4), _r())
+
+_LAN_PADS = {"PAD MIN": _bars(_one(0), _r(3)), "PAD MAJ 2": _bars(_r(2), _one(-5), _r()), "PAD MAJ": _bars(_r(3), _one(2))}
+_LAN_PLUCK = _bars("0 . 7 . 12 . 7 . 3 . 7 . 12 . 7 .", "0 . 7 . 12 . 7 . 3 . 7 . 15 . 12 .",
+                   "3 . 7 . 10 . 7 . 3 . 7 . 15 . 10 .", "-2 . 2 . 5 . 2 . 10 . 5 . 2 . 5 .")
+_LAN_KEYS = _bars("12 . . . . . 10 . . . 7 . . . . .", ". . . . 5 . . . 7 . . . . . . .",
+                  "10 . . . . . 7 . . . 3 . . . . .", "2 . . . . . 5 . . . 7 . . . 10 .")
+_LAN_BELL = _bars(_one(12), _r(), _one(15), _one(14, 8))
+_LAN_SUB = _bars(_one(0), _r(), _one(3), _one(-2))
+
+_DEEP_PADS = {"PAD MIN": _bars(_one(0), _r(2), _one(-5)), "PAD MAJ": _bars(_r(2), _one(0), _r())}
+_DEEP_SUB = _bars(_one(0), _r(), _one(-4), _one(-5))
+_DEEP_KEYS = _bars(". . . . . . . . 12 . . . 10 . . .", _one(7), ". . . . . . . . 8 . . . 7 . . .", _one(2))
+_DEEP_GLASS = _bars(_r(), _one(7, 8), _r(), _one(0, 4))
+_DEEP_PLUCK = _bars(_r(), ". . . . 0 . . . . . . . 7 . . .", _r(), ". . . . -5 . . . . . . . 2 . . .")
+_DEEP_HEART = "x..x......x....."
+
+# Techno is in A minor: BASS and ACID are A, STAB is an A minor seventh chord.
+_WAR_BASS = ". . 0 . . . 0 . . . 0 . . . 0 ."
+_WAR_BASS2 = _bars(_WAR_BASS, ". . 0 . . . 0 . . . 3 . . . 5 .")
+_WAR_ACID = _bars("0 . . 0 . . 12 . . 0 . . 10! . 12 .", "0 . . 0 . . 12 . . 3 . . 7! . 5 .")
+_WAR_ACID2 = _bars("0 . 12 0 . . 12 . . 0 . 15! 10 . 12 .", "0 . 12 0 . . 12 . 3 3 . 5 7! . 10 12")
+_WAR_TOM = "......x..x....x."
+_WAR_RIM = ".x...x...x..x..."
+_WAR_STAB = ".......x......x."
+
+_HYP_BASS = "0 . . 0 . . 0 . . 0 . . 0 . 0 ."
+_HYP_ACID = _bars("0 . . . . . 3 . . . . . 0 . . .", "0 . . . . . 3 . . . 5 . 7 . . .")
+_HYP_ACID2 = _bars("0 . 12 . . . 3 . . 12 . . 0 . . .", "0 . 12 . . . 3 . 15! . 5 . 7 . 12 .")
+_HYP_PERC = "..x..x....x..x.."
+_HYP_HATS = "xxXxxxXxxxXxxxXx"
+
+_PEAK_BASS = ". 0 0 0 . 0 0 0 . 0 0 0 . 0 0 0"
+_PEAK_BASS2 = _bars(_PEAK_BASS, ". 0 0 0 . 0 0 0 . 3 3 3 . 5 5 5")
+_PEAK_STAB = _bars("0 . . 0 . . 0 . . . . . . . . .", "3 . . 3 . . 5 . . . . . 7 . . .")
+_PEAK_ACID = _bars("12 . 0 . 12 . 0 12 . 0 . 12 . 15! . 12", "12 . 0 . 12 . 0 12 . 0 . 10 . 7! . 5")
+
+# House is in C minor: CHORD and PIANO are C minor seventh (5 up is F minor, 7 up is G minor).
+_SUN_PIANO = _bars("5! . . 5 . . 5 . . . 5 . . . . .", "7! . . 7 . . 7 . . . 7 . . . . .",
+                   "0! . . 0 . . 0 . . . 0 . . 0 . .", "0! . . 0 . . 0 . . . . . . . . .")
+_SUN_BASS = _bars("5 . . . . . 5 . . . 5 . . . 17 .", "7 . . . . . 7 . . . 7 . . . 19 .",
+                  "0 . . . . . 0 . . . 0 . . . 12 .", "0 . . 0 . . 0 . . . 3 . 5 . 7 .")
+_SUN_ORGAN = _bars(". . . . 12 . . 8 . . . . 5 . . .", ". . . . 14 . . 10 . . . . 7 . . .",
+                   ". . . . 15 . . 12 . . . . 7 . . .", ". . . . . . . . 10 . 12 . . . . .")
+
+_BACK_CHORD = _bars(". . . 0 . . . . . . 0 . . . . .", ". . . 0 . . . . . . 0 . . 0 . .",
+                    ". . . -5 . . . . . . -5 . . . . .", ". . . 5 . . . . . . 5 . . 5 . .")
+_BACK_BASS = _bars("0 . . . . . . 0 . . 0 . . . . .", "0 . . . . . . 0 . . 0 . 3 . . .",
+                   "-5 . . . . . . -5 . . -5 . . . . .", "5 . . . . . . 5 . . 5 . 7 . 10 .")
+_BACK_ORGAN = _bars(_r(), ". . . . . . . . . . . . 7 . 10 .", _r(), ". . . . . . 12 . . . 10 . . . 7 .")
+_BACK_PIANO = _bars(_one("0!"), _r(), _one("-5!"), _r())
+
+_DISCO_BASS = _bars(_oct(0), _oct(0), _oct(5), _oct(7))
+_DISCO_PIANO = _bars("0! . . . . . . . . . 0 . . . . .", _r(), "5! . . . . . . . . . 5 . . . . .", "7! . . . . . 7 . . . . . 7 . . .")
+_DISCO_ORGAN = _bars("0 . . 3 . . 7 . . . 10 . . 7 . .", ". . . . . . . . . . . . 12 . 10 .",
+                     "5 . . 8 . . 12 . . . 15 . . 12 . .", "7 . . 10 . . 14 . . . 10 . 7 . . .")
+_HOU_HATS = "x.xxx.xxx.xxx.xx"
+_HOU_CONGAS = {"CONGA HI": "......x......x..", "CONGA LO": "...x......x....x"}
+
+# Hip hop is in F minor: KEYS MIN is F minor (5 up is B flat minor, 5 down is C minor), KEYS MAJ is D flat (2 up is E flat).
+_LATE_KEYS = {"KEYS MAJ": _bars(_one(0), _r(3)), "KEYS MIN": _bars(_r(), _one(-5), _one(0), _one(0))}
+_LATE_808 = _bars("-4 . . . . . . . . . . -4 . . . .", "-5 . . . . . . . . . -5 . . . . .",
+                  "0 . . . . . . . . . 0 . . . . .", "0 . . . . . . 0 . . . . . 3 . .")
+_LATE_LEAD = _bars("8 . . . 7 . . 3 . . . . . . . .", "7 . . . 10 . . 7 . . . . . . . .",
+                   "12 . . 10 . . 7 . . . 3 . . . . .", ". . . . . . . . 0 . 3 . 5 . 7 .")
+_LATE_BELL = _bars(_r(), _one(7, 12), _r(), _one(12, 8))
+_LATE_KICK = "x.........x..x..|x......x..x....."
+
+_NOD_KEYS = {"KEYS MIN": _bars(_one(0), _one(0), _r(2)), "KEYS MAJ": _bars(_r(2), _one(0), _one(2))}
+_NOD_BASS = _bars("0 . . . . . 0 . . . 12 . . 10 . .", "0 . . . . . 0 . . 3 . . 7 . . .",
+                  "-4 . . . . . -4 . . . 8 . . 7 . .", "-2 . . . . . -2 . . . 10 . 7 . 3 .")
+_NOD_808 = _bars(_one(0), _r(), _one(-4), _one(-2))
+_NOD_LEAD = _bars(_one(12), ". . . . . . . . 10 . 12 . . . . .", "8 . . . . . . . . . 7 . . . . .",
+                  "10 . . . . . 7 . . . 5 . 2 . . .")
+_NOD_KICK = "x..x......x.....|x.....x...x..x.."
+
+_BURN_KEYS = {"KEYS MIN": _bars(_one(0), _r(), _one(5), _one(-5)), "KEYS MAJ": _bars(_r(), _one(0), _r(2))}
+_BURN_808 = _bars("0 . . . . . . . . . 0 . . . . .", "-4 . . . . . . . . . . . -4 . . .",
+                  "5 . . . . . . . . . 5 . . . . .", "-5 . . . . . . -5 . . . . -2 . . .")
+_BURN_BELL = _bars("0 . . 3 . . 7 . . . . . . . . .", "8 . . 7 . . 3 . . . . . . . . .",
+                   "5 . . 8 . . 12 . . . . . . . . .", "7 . . 10 . . 14 . . . . . 12 . . .")
+_BURN_LEAD = _bars(_r(), ". . . . . . . . 12 . . 8 . . 7 .", _r(), ". . . . . . . . 7 . . 3 . . 2 .")
+_BURN_BASS = _bars(". . . . . . 12 . . . . . . . . .", ". . . . . . 8 . . . . . . . . .",
+                   ". . . . . . 17 . . . . . . . . .", ". . . . . . 7 . . . . . 10 . . .")
+_BURN_HATS = "x.x.x.x.x.xxx.x.|x.x.xxx.x.x.x.xx"
+_BURN_KICK = "x.........x.....|...x......x....."
+_HALF = "........x......."                  # the backbeat at half speed
+
+SONGS = {
+    "AMBIENT": [
+        {"name": "DRIFT", "about": "72 BPM, pads, bells and a soft pulse",
+         "patterns": STYLES["AMBIENT"]["patterns"], "song": STYLES["AMBIENT"]["song"]},
+        {"name": "TIDE", "about": "60 BPM, no drums, slow chords and bells", "bpm": 60,
+         "patterns": [
+             (64, {"DRONE": _LONG, "WIND": _LONG, "GLASS": _TIDE_GLASS}),
+             (64, dict(_TIDE_PADS, DRONE=_LONG, BELL=_TIDE_BELL)),
+             (64, dict(_TIDE_PADS, DRONE=_LONG, BELL=_TIDE_BELL, KEYS=_TIDE_KEYS, SUB=_TIDE_SUB)),
+             (64, dict(_TIDE_PADS, KEYS=_TIDE_KEYS, GLASS=_TIDE_GLASS, SUB=_TIDE_SUB, SHIMMER=_LONG, TEXTURE=_LONG)),
+             (64, {"DRONE": _LONG, "TEXTURE": _LONG, "GLASS": _TIDE_GLASS, "SWELL": "." * 48 + "x" + "." * 15}),
+             (64, dict(_TIDE_PADS, DRONE=_LONG, BELL=_TIDE_BELL, KEYS=_TIDE_KEYS, SUB=_TIDE_SUB, HEART="x" + "." * 15,
+                       TICK="....x.......x...", SHAKER="..x...x...x...x.",
+                       PLUCK=_bars(_one(12, 12), _one(8, 12), _one(15, 12), _one(14, 12)))),
+             (64, {"PAD MIN": _bars(_one(0), _r(3)), "WIND": _LONG, "BELL": _bars(_one(7), _r(), _one(0, 8), _r())}),
+         ], "song": "ABBCCDEFFCG"},
+        {"name": "LANTERNS", "about": "84 BPM, plucked arpeggio over a heartbeat", "bpm": 84,
+         "patterns": [
+             (64, {"PLUCK": _LAN_PLUCK, "TICK": _OFF, "DRONE": _LONG}),
+             (64, dict(_LAN_PADS, PLUCK=_LAN_PLUCK, TICK=_OFF, DRONE=_LONG, HEART="x.......x.x.....")),
+             (64, dict(_LAN_PADS, PLUCK=_LAN_PLUCK, TICK=_OFF, DRONE=_LONG, HEART="x.......x.x.....", KEYS=_LAN_KEYS,
+                       SHAKER=".xx..xx..xx..xx.", SUB=_LAN_SUB, BELL=_LAN_BELL)),
+             (64, dict(_LAN_PADS, PLUCK=_LAN_PLUCK, TICK=_OFF, HEART="x.......x.x.....", KEYS=_LAN_KEYS,
+                       SHAKER=".xx..xx..xx..xx.", SUB=_LAN_SUB, BELL=_LAN_BELL, SHIMMER=_LONG,
+                       GLASS=_bars(_r(), _one(0, 8), _r(), _one(3, 8)))),
+             (64, dict(_LAN_PADS, KEYS=_LAN_KEYS, WIND=_LONG, SWELL="." * 48 + "x" + "." * 15)),
+             (64, {"PLUCK": _LAN_PLUCK, "PAD MIN": _bars(_one(0), _r(3)), "BELL": _bars(_one(12), _r(3)), "TEXTURE": _LONG}),
+         ], "song": "AABBCCDDECCDDF"},
+        {"name": "DEEP WATER", "about": "66 BPM, dark drone and sub, sparse keys", "bpm": 66,
+         "patterns": [
+             (64, {"DRONE": _LONG, "SUB": _DEEP_SUB, "TEXTURE": _LONG}),
+             (64, dict(_DEEP_PADS, DRONE=_LONG, SUB=_DEEP_SUB, HEART=_DEEP_HEART)),
+             (64, dict(_DEEP_PADS, DRONE=_LONG, SUB=_DEEP_SUB, HEART=_DEEP_HEART, KEYS=_DEEP_KEYS, GLASS=_DEEP_GLASS,
+                       TICK="......x.........")),
+             (64, dict(_DEEP_PADS, DRONE=_LONG, SUB=_DEEP_SUB, HEART=_DEEP_HEART, KEYS=_DEEP_KEYS, PLUCK=_DEEP_PLUCK,
+                       TICK="......x.........", SHAKER=_BACK, SHIMMER=_LONG, BELL=_bars(_one(12), _r(), _one(8), _r()))),
+             (64, {"WIND": _LONG, "GLASS": _DEEP_GLASS, "KEYS": _DEEP_KEYS, "SWELL": "." * 48 + "x" + "." * 15}),
+             (64, {"DRONE": _LONG, "PAD MIN": _bars(_one(0), _r(3)), "BELL": _bars(_r(), _one(7), _r(), _one(0))}),
+         ], "song": "ABBCCDDECDF"},
+    ],
+    "TECHNO": [
+        {"name": "ACID LINE", "about": "132 BPM, rolling bass and an acid line",
+         "patterns": STYLES["TECHNO"]["patterns"], "song": STYLES["TECHNO"]["song"]},
+        {"name": "WAREHOUSE", "about": "136 BPM, toms, off-beat bass and stabs", "bpm": 136,
+         "patterns": [
+             (16, {"KICK": _FOUR, "RIM": _WAR_RIM, "TOM": _WAR_TOM}),
+             (16, {"KICK": _FOUR, "HAT OP": _OFF, "TOM": _WAR_TOM, "RIM": _WAR_RIM, "BASS": _WAR_BASS}),
+             (32, {"KICK": _FOUR, "HAT CL": "x.x.x.x.x.x.x.xx", "HAT OP": _OFF, "CLAP": _BACK, "BASS": _WAR_BASS2, "TOM": _WAR_TOM,
+                   "STAB": _WAR_STAB}),
+             (32, {"KICK": _FOUR, "HAT CL": "x.x.x.x.x.x.x.xx", "HAT OP": _OFF, "CLAP": _BACK, "BASS": _WAR_BASS2, "TOM": _WAR_TOM,
+                   "STAB": _WAR_STAB, "ACID": _WAR_ACID, "RIDE": "x.x.x.x.x.x.x.x.", "PERC": ".x....x..x....x."}),
+             (32, {"PAD": "x" + "." * 31, "STAB": _WAR_STAB, "HAT CL": _OFF, "RISER": "." * 16 + "x" + "." * 15, "ZAP": "x" + "." * 31,
+                   "TOM": "." * 16 + "........x.x.xxxx"}),
+             (32, {"KICK": _TEC_FILL, "CRASH": "x" + "." * 31, "HAT CL": "x.x.x.x.x.x.x.xx", "HAT OP": "..X...x...X...x.",
+                   "CLAP": "....X.......X...", "BASS": _WAR_BASS2, "TOM": _WAR_TOM, "STAB": _WAR_STAB, "ACID": _WAR_ACID2,
+                   "RIDE": "x.x.x.x.x.x.x.x.", "RIM": _WAR_RIM}),
+             (16, {"KICK": _FOUR, "TOM": _WAR_TOM, "BASS": _WAR_BASS, "RIM": _WAR_RIM}),
+             (16, {"KICK": _FOUR, "BOOM": "x" + "." * 15, "RIM": _WAR_RIM}),
+         ], "song": "AAAABBBBCCCCDDDDEEFFFFDDDDEEFFFFGGHH"},
+        {"name": "HYPNOTIC", "about": "128 BPM, minimal, a slow acid build", "bpm": 128,
+         "patterns": [
+             (16, {"KICK": _FOUR, "PERC": _HYP_PERC}),
+             (16, {"KICK": _FOUR, "PERC": _HYP_PERC, "HAT CL": _HYP_HATS, "BASS": _HYP_BASS}),
+             (32, {"KICK": _FOUR, "PERC": _HYP_PERC, "HAT CL": _HYP_HATS, "BASS": _HYP_BASS, "ACID": _HYP_ACID, "RIM": "....x..x....x..."}),
+             (32, {"KICK": _FOUR, "PERC": _HYP_PERC, "HAT CL": _HYP_HATS, "BASS": _HYP_BASS, "ACID": _HYP_ACID2, "RIM": "....x..x....x...",
+                   "HAT OP": _OFF, "CLAP": _BACK, "PAD": "x" + "." * 31}),
+             (32, {"PAD": "x" + "." * 31, "ACID": _HYP_ACID, "PERC": _HYP_PERC, "RISER": "." * 16 + "x" + "." * 15,
+                   "ZAP": "." * 28 + "x..."}),
+             (32, {"KICK": _FOUR, "CRASH": "x" + "." * 31, "BASS": _HYP_BASS, "ACID": _HYP_ACID2, "HAT CL": _HYP_HATS, "HAT OP": "..X...x...X...x.",
+                   "CLAP": _BACK, "RIDE": "x.x.x.x.x.x.x.x.", "STAB": "..........x.....", "TOM": "." * 16 + "..........x..x.x",
+                   "PERC": _HYP_PERC}),
+             (16, {"KICK": _FOUR, "PERC": _HYP_PERC, "BASS": _HYP_BASS, "BOOM": "x" + "." * 15}),
+         ], "song": "AAAABBBBCCCCDDDDEEFFFFDDDDFFFFGGGG"},
+        {"name": "PEAK TIME", "about": "140 BPM, sixteenth-note bass, big drops", "bpm": 140,
+         "patterns": [
+             (16, {"KICK": _FOUR, "HAT CL": _OFF, "BASS": _PEAK_BASS}),
+             (32, {"KICK": _FOUR, "HAT CL": "xx.xxx.xxx.xxx.x", "CLAP": _BACK, "BASS": _PEAK_BASS2, "HAT OP": _OFF}),
+             (32, {"KICK": _FOUR, "HAT CL": "xx.xxx.xxx.xxx.x", "CLAP": _BACK, "BASS": _PEAK_BASS2, "HAT OP": _OFF, "STAB": _PEAK_STAB,
+                   "RIDE": "x.x.x.x.x.x.x.x."}),
+             (32, {"KICK": _FOUR, "HAT CL": "xx.xxx.xxx.xxx.x", "CLAP": _BACK, "BASS": _PEAK_BASS2, "HAT OP": _OFF, "STAB": _PEAK_STAB,
+                   "RIDE": "x.x.x.x.x.x.x.x.", "ACID": _PEAK_ACID, "PERC": ".x....x..x....x.", "RIM": "......x......x.."}),
+             (32, {"PAD": "x" + "." * 31, "STAB": _PEAK_STAB, "RISER": "." * 16 + "x" + "." * 15, "ZAP": "x" + "." * 31,
+                   "CLAP": "." * 16 + "x...x...x.x.xxxx"}),
+             (32, {"KICK": _TEC_FILL, "CRASH": "x" + "." * 31, "BASS": _PEAK_BASS2, "ACID": _PEAK_ACID, "STAB": _PEAK_STAB,
+                   "RIDE": "x.x.x.x.x.x.x.x.", "HAT OP": "..X...x...X...x.", "CLAP": "....X.......X...", "HAT CL": "xx.xxx.xxx.xxx.x",
+                   "TOM": "." * 16 + "............x.xx"}),
+             (16, {"KICK": _FOUR, "BASS": _PEAK_BASS, "BOOM": "x" + "." * 15, "HAT CL": _OFF}),
+         ], "song": "AAAABBBBCCCCDDDDEEFFFFCCDDEEFFFFGGGG"},
+    ],
+    "HOUSE": [
+        {"name": "ORGAN HOOK", "about": "124 BPM, chords and an organ hook",
+         "patterns": STYLES["HOUSE"]["patterns"], "song": STYLES["HOUSE"]["song"]},
+        {"name": "SUNRISE", "about": "122 BPM, piano house with strings", "bpm": 122,
+         "patterns": [
+             (64, {"PIANO": _SUN_PIANO, "SHAKER": _OFF, "HAT CL": _OFF}),
+             (64, {"PIANO": _SUN_PIANO, "SHAKER": _OFF, "KICK": _FOUR, "CLAP": _BACK, "HAT OP": _OFF, "BASS": _SUN_BASS}),
+             (64, {"PIANO": _SUN_PIANO, "SHAKER": _OFF, "KICK": _FOUR, "CLAP": _BACK, "HAT OP": _OFF, "BASS": _SUN_BASS,
+                   "HAT CL": _HOU_HATS, "CONGA LO": "...x......x....x", "ORGAN": _SUN_ORGAN}),
+             (64, dict(_HOU_CONGAS, PIANO=_SUN_PIANO, SHAKER=_OFF, KICK=_FOUR, CLAP="....X.......X...", BASS=_SUN_BASS,
+                       ORGAN=_SUN_ORGAN, STRINGS=_LONG, RIDE="x.x.x.x.x.x.x.x.", CRASH=_LONG, **{"HAT OP": "..X...x...X...x.", "HAT CL": _HOU_HATS})),
+             (64, {"PIANO": _SUN_PIANO, "STRINGS": _LONG, "SHAKER": _OFF, "SWEEP": "." * 48 + "x" + "." * 15, "SNARE": _ROLL}),
+             (64, dict(_HOU_CONGAS, KICK=_FOUR, BASS=_SUN_BASS, SHAKER=_OFF, PIANO=_bars(_one("5!"), _r(3)))),
+         ], "song": "ABBCCDDEDDCF"},
+        {"name": "BACK ROOM", "about": "120 BPM, deep and sparse, late night", "bpm": 120, "swing": 56,
+         "patterns": [
+             (64, {"KICK": _FOUR, "HAT CL": _OFF, "CONGA LO": "..x.......x....."}),
+             (64, {"KICK": _FOUR, "HAT CL": _OFF, "CONGA LO": "..x.......x.....", "CHORD": _BACK_CHORD, "SHAKER": _HOU_HATS, "CLAP": _BACK}),
+             (64, {"KICK": _FOUR, "HAT CL": _OFF, "CONGA LO": "..x.......x.....", "CHORD": _BACK_CHORD, "SHAKER": _HOU_HATS, "CLAP": _BACK,
+                   "BASS": _BACK_BASS, "HAT OP": "......x.......x.", "CONGA HI": ".....x.......x.x"}),
+             (64, {"KICK": _FOUR, "HAT CL": _OFF, "CONGA LO": "..x.......x.....", "CHORD": _BACK_CHORD, "SHAKER": _HOU_HATS, "CLAP": _BACK,
+                   "BASS": _BACK_BASS, "HAT OP": "......x.......x.", "CONGA HI": ".....x.......x.x", "ORGAN": _BACK_ORGAN,
+                   "RIDE": "x.x.x.x.x.x.x.x.", "STRINGS": _LONG}),
+             (64, {"CHORD": _BACK_CHORD, "STRINGS": _LONG, "ORGAN": _BACK_ORGAN, "SHAKER": _HOU_HATS, "SWEEP": "." * 48 + "x" + "." * 15,
+                   "SNARE": "." * 60 + "x.xx"}),
+             (64, {"KICK": _FOUR, "CRASH": _LONG, "HAT CL": _OFF, "CONGA LO": "..x.......x.....", "CHORD": _BACK_CHORD, "SHAKER": _HOU_HATS,
+                   "CLAP": "....X.......X...", "BASS": _BACK_BASS, "HAT OP": "......x.......x.", "CONGA HI": ".....x.......x.x",
+                   "ORGAN": _BACK_ORGAN, "PIANO": _BACK_PIANO, "RIDE": "x.x.x.x.x.x.x.x."}),
+             (64, {"KICK": _FOUR, "CHORD": _BACK_CHORD, "CONGA LO": "..x.......x.....", "SHAKER": _HOU_HATS}),
+         ], "song": "ABBCCDDEFFDDG"},
+        {"name": "DISCO LIGHTS", "about": "126 BPM, octave bass, strings, piano", "bpm": 126, "swing": 50,
+         "patterns": [
+             (64, {"KICK": _FOUR, "HAT OP": _OFF, "BASS": _DISCO_BASS}),
+             (64, {"KICK": _FOUR, "HAT OP": _OFF, "BASS": _DISCO_BASS, "CLAP": _BACK, "HAT CL": _HOU_HATS, "CHORD": _HOU_CHORD}),
+             (64, dict(_HOU_CONGAS, KICK=_FOUR, BASS=_DISCO_BASS, CLAP=_BACK, CHORD=_HOU_CHORD, STRINGS=_LONG, SHAKER=_OFF,
+                       **{"HAT OP": _OFF, "HAT CL": _HOU_HATS})),
+             (64, dict(_HOU_CONGAS, KICK=_FOUR, BASS=_DISCO_BASS, CLAP=_BACK, CHORD=_HOU_CHORD, STRINGS=_LONG, SHAKER=_OFF,
+                       ORGAN=_DISCO_ORGAN, RIDE="x.x.x.x.x.x.x.x.", **{"HAT OP": _OFF, "HAT CL": _HOU_HATS})),
+             (64, {"STRINGS": _LONG, "PIANO": _DISCO_PIANO, "CHORD": _HOU_CHORD, "SWEEP": "." * 48 + "x" + "." * 15, "SNARE": _ROLL}),
+             (64, dict(_HOU_CONGAS, KICK=_FOUR, CRASH=_LONG, BASS=_DISCO_BASS, CLAP="....X.......X...", CHORD=_HOU_CHORD, STRINGS=_LONG,
+                       SHAKER=_OFF, ORGAN=_DISCO_ORGAN, PIANO=_DISCO_PIANO, RIDE="x.x.x.x.x.x.x.x.", SNARE="." * 60 + "..x.",
+                       **{"HAT OP": "..X...x...X...x.", "HAT CL": _HOU_HATS})),
+             (64, {"KICK": _FOUR, "BASS": _DISCO_BASS, "HAT OP": _OFF, "STRINGS": _LONG}),
+         ], "song": "AABBCCDDEFFDDEFFG"},
+    ],
+    "HIP HOP": [
+        {"name": "BOOM BAP", "about": "88 BPM, swung drums, dusty keys, 808",
+         "patterns": STYLES["HIP HOP"]["patterns"], "song": STYLES["HIP HOP"]["song"]},
+        {"name": "LATE NIGHT", "about": "82 BPM, mellow keys and a slow lead", "bpm": 82, "swing": 58,
+         "patterns": [
+             (64, dict(_LATE_KEYS, VINYL="x" + "." * 15)),
+             (64, dict(_LATE_KEYS, VINYL="x" + "." * 15, KICK=_LATE_KICK, SNARE=_BACK, **{"HAT CL": "x.x.x.x.x.x.x.x."})),
+             (64, dict(_LATE_KEYS, VINYL="x" + "." * 15, KICK=_LATE_KICK, SNARE=_BACK, RIM=".......x........",
+                       **{"HAT CL": "x.x.x.x.x.x.x.x.", "808": _LATE_808})),
+             (64, dict(_LATE_KEYS, VINYL="x" + "." * 15, KICK=_LATE_KICK, SNARE=_BACK, RIM=".......x........", LEAD=_LATE_LEAD,
+                       SHAKER=_OFF, **{"HAT CL": "x.x.x.x.x.x.x.x.", "808": _LATE_808, "HAT OP": "." * 30 + "x."})),
+             (64, dict(_LATE_KEYS, VINYL="x" + "." * 15, LEAD=_LATE_LEAD, BELL=_LATE_BELL, REVERSE="." * 56 + "x" + "." * 7)),
+             (64, dict(_LATE_KEYS, VINYL="x" + "." * 15, KICK=_LATE_KICK, SNARE="....X.......X...", CLAP=_BACK, RIM=".......x........",
+                       LEAD=_LATE_LEAD, SHAKER=_OFF, BELL=_LATE_BELL, TAMB=_OFF,
+                       BASS=_bars(_one(8, 14), _one(7, 14), _one(12, 14), _r()),
+                       **{"HAT CL": "x.x.x.x.x.x.x.x.", "808": _LATE_808, "HAT OP": "." * 30 + "x."})),
+             (64, dict(_LATE_KEYS, VINYL="x" + "." * 15, RIM=_BACK, BELL=_LATE_BELL)),
+         ], "song": "ABCCDDEFFDG"},
+        {"name": "HEAD NOD", "about": "94 BPM, hard drums and a walking bass", "bpm": 94, "swing": 62,
+         "patterns": [
+             (64, {"KICK": _NOD_KICK, "SNARE": _BACK, "HAT CL": _HIP_HATS, "VINYL": "x" + "." * 15}),
+             (64, dict(_NOD_KEYS, KICK=_NOD_KICK, SNARE=_BACK, VINYL="x" + "." * 15, BASS=_NOD_BASS, **{"HAT CL": _HIP_HATS})),
+             (64, dict(_NOD_KEYS, KICK=_NOD_KICK, SNARE=_BACK, VINYL="x" + "." * 15, BASS=_NOD_BASS, TAMB=_OFF,
+                       **{"HAT CL": _HIP_HATS, "808": _NOD_808, "HAT OP": "." * 14 + "x."})),
+             (64, dict(_NOD_KEYS, KICK=_NOD_KICK, SNARE="....X.......X...", CLAP=_BACK, VINYL="x" + "." * 15, BASS=_NOD_BASS, TAMB=_OFF,
+                       LEAD=_NOD_LEAD, RIM="..x......x......", **{"HAT CL": _HIP_HATS, "808": _NOD_808, "HAT OP": "." * 14 + "x."})),
+             (64, dict(_NOD_KEYS, VINYL="x" + "." * 15, BASS=_NOD_BASS, SHAKER=_OFF, RIM=_BACK, REVERSE="." * 56 + "x" + "." * 7)),
+             (64, dict(_NOD_KEYS, KICK=_NOD_KICK, SNARE="....X.......X...", CLAP=_BACK, VINYL="x" + "." * 15, BASS=_NOD_BASS, TAMB=_OFF,
+                       LEAD=_NOD_LEAD, RIM="..x......x......", BELL=_bars(_one(12, 12), _r(), _one(8, 12), _one(10, 12)),
+                       **{"HAT CL": _HIP_HATS, "808": _NOD_808, "HAT OP": "." * 14 + "x."})),
+             (64, dict(_NOD_KEYS, VINYL="x" + "." * 15, KICK="x.........x.....", RIM=_BACK)),
+         ], "song": "ABBCCDDEFFDG"},
+        {"name": "SLOW BURN", "about": "70 BPM, half-time, busy hats, bell tune", "bpm": 70, "swing": 50,
+         "patterns": [
+             (64, dict(_BURN_KEYS, BELL=_BURN_BELL, VINYL="x" + "." * 15)),
+             (64, dict(_BURN_KEYS, BELL=_BURN_BELL, VINYL="x" + "." * 15, CLAP=_HALF, **{"808": _BURN_808, "HAT CL": _BURN_HATS})),
+             (64, dict(_BURN_KEYS, BELL=_BURN_BELL, VINYL="x" + "." * 15, CLAP=_HALF, KICK=_BURN_KICK, SNARE=_HALF,
+                       **{"808": _BURN_808, "HAT CL": _BURN_HATS, "HAT OP": "." * 30 + "x."})),
+             (64, dict(_BURN_KEYS, BELL=_BURN_BELL, VINYL="x" + "." * 15, CLAP=_HALF, KICK=_BURN_KICK, SNARE=_HALF, LEAD=_BURN_LEAD,
+                       RIM="...x..........x.", TAMB=_OFF, **{"808": _BURN_808, "HAT CL": _BURN_HATS, "HAT OP": "." * 30 + "x."})),
+             (64, dict(_BURN_KEYS, BELL=_BURN_BELL, VINYL="x" + "." * 15, SHAKER=_OFF, REVERSE="." * 56 + "x" + "." * 7)),
+             (64, dict(_BURN_KEYS, BELL=_BURN_BELL, VINYL="x" + "." * 15, CLAP=_HALF, KICK=_BURN_KICK, SNARE="........X.......",
+                       LEAD=_BURN_LEAD, RIM="...x..........x.", TAMB=_OFF, BASS=_BURN_BASS,
+                       **{"808": _BURN_808, "HAT CL": _BURN_HATS, "HAT OP": "." * 30 + "x."})),
+             (64, dict(_BURN_KEYS, BELL=_BURN_BELL, VINYL="x" + "." * 15)),
+         ], "song": "ABCCDDEFFG"},
+    ],
+}
 BUILDERS = {"AMBIENT": _ambient, "TECHNO": _techno, "HOUSE": _house, "HIP HOP": _hiphop}
 
 
@@ -469,9 +772,11 @@ def ensure_sounds(style, root):
     return paths
 
 
-def project(style, root):
-    """The style as a project dictionary (see Engine.to_dict): kit on the first bank, patterns and song."""
+def project(style, root, song=0):
+    """The style as a project dictionary (see Engine.to_dict): its kit on the first bank, with the patterns and
+    chain of one of its songs (a number, see SONGS), or with nothing written yet (song=None)."""
     st = STYLES[style]
+    sg = SONGS[style][song] if song is not None else {"name": style, "patterns": [], "song": ""}
     paths = ensure_sounds(style, root)
     index = {name: i for i, (name, _) in enumerate(st["pads"])}
     pads = []
@@ -480,36 +785,37 @@ def project(style, root):
         pad.update((k, v) for k, v in opts.items() if k != "file")
         pads.append(pad)
     patterns = []
-    for length, rows in st["patterns"]:
+    for length, rows in sg["patterns"]:
         steps = [[0] * length for _ in range(NPADS)]
         notes = [[0] * length for _ in range(NPADS)]
         for name, spec in rows.items():
             for step, value, note in parse_row(spec, length):
                 steps[index[name]][step], notes[index[name]][step] = value, note
         patterns.append({"length": length, "steps": steps, "notes": notes})
-    return {"name": style, "bpm": st["bpm"], "swing": st["swing"], "master": 0.8, "comp": st["comp"], "delay_div": st["delay_div"],
+    return {"name": sg["name"], "bpm": sg.get("bpm", st["bpm"]), "swing": sg.get("swing", st["swing"]), "master": 0.8, "comp": st["comp"], "delay_div": st["delay_div"],
             "delay_fb": st["delay_fb"], "reverb_size": st["reverb_size"], "pattern": 0, "patterns": patterns,
-            "song": [PAT_NAMES.index(c) for c in st["song"]], "song_on": True, "pads": pads}
+            "song": [PAT_NAMES.index(c) for c in sg["song"]], "song_on": song is not None, "pads": pads}
 
 
 def check():
-    """Every style must fit the app's limits; raises ValueError naming the first thing that does not."""
+    """Every style and song must fit the app's limits; raises ValueError naming the first thing that does not."""
     for style in ORDER:
-        st = STYLES[style]
-        names = [name for name, _ in st["pads"]]
+        names = [name for name, _ in STYLES[style]["pads"]]
         if len(names) != BANK or len(set(names)) != BANK:
             raise ValueError("%s: needs %d differently named pads" % (style, BANK))
-        if len(st["patterns"]) > NPAT:
-            raise ValueError("%s: too many patterns" % style)
-        for n, (length, rows) in enumerate(st["patterns"]):
-            if not 16 <= length <= MAX_STEPS:
-                raise ValueError("%s %s: bad length" % (style, PAT_NAMES[n]))
-            for name, spec in rows.items():
-                if name not in names:
-                    raise ValueError("%s %s: no pad called %s" % (style, PAT_NAMES[n], name))
-                try:
-                    parse_row(spec, length)
-                except ValueError as e:
-                    raise ValueError("%s %s %s: %s" % (style, PAT_NAMES[n], name, e))
-        if any(PAT_NAMES.index(c) >= len(st["patterns"]) for c in st["song"]):
-            raise ValueError("%s: the song uses a pattern that is not there" % style)
+        for sg in SONGS[style]:
+            what = "%s %s" % (style, sg["name"])
+            if len(sg["patterns"]) > NPAT:
+                raise ValueError("%s: too many patterns" % what)
+            for n, (length, rows) in enumerate(sg["patterns"]):
+                if not 16 <= length <= MAX_STEPS:
+                    raise ValueError("%s %s: bad length" % (what, PAT_NAMES[n]))
+                for name, spec in rows.items():
+                    if name not in names:
+                        raise ValueError("%s %s: no pad called %s" % (what, PAT_NAMES[n], name))
+                    try:
+                        parse_row(spec, length)
+                    except ValueError as e:
+                        raise ValueError("%s %s %s: %s" % (what, PAT_NAMES[n], name, e))
+            if not sg["song"] or any(PAT_NAMES.index(c) >= len(sg["patterns"]) for c in sg["song"]):
+                raise ValueError("%s: the song uses a pattern that is not there" % what)

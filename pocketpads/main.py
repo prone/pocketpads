@@ -658,31 +658,50 @@ class App:
                        "hint": "A open    B cancel    save first if you want to keep your changes"}
 
     def ask_new_project(self):
-        """NEW: pick the starter kit or a style, then start it in the first empty slot."""
-        items = [("STARTER KIT   drums and bass with a demo beat", "")]
+        """NEW: pick the starter kit or a style, then what to start with, then it starts in the first empty slot."""
+        items = [("STARTER KIT   drums, bass and a few notes", "")]
         items += [("%s   %s" % (name, styles.ABOUT[name]), name) for name in styles.ORDER]
-        self.picker = {"title": "NEW PROJECT: PICK A KIT AND SONG", "items": items, "idx": 0, "fn": self.ask_new_slot,
-                       "hint": "A choose    B cancel    each style is a kit, patterns and a full song"}
+        self.picker = {"title": "NEW PROJECT: PICK A KIT", "items": items, "idx": 0, "fn": self.ask_new_start,
+                       "hint": "A choose    B cancel    next you pick sounds only or a ready-made song"}
 
-    def ask_new_slot(self, style):
+    def ask_new_start(self, style):
+        """Second step of NEW: just the kit's sounds, or one of its ready-made songs."""
+        items = [("SOUNDS ONLY   the kit on the pads, nothing written yet", (style, None))]
+        if style:
+            items += [("%d  %s   %s" % (n + 1, sg["name"], sg["about"]), (style, n)) for n, sg in enumerate(styles.SONGS[style])]
+        else:
+            items += [("DEMO BEAT   a beat in pattern A, a variation in B", (style, 0))]
+        self.picker = {"title": "%s: START WITH" % (style or "STARTER KIT"), "items": items, "idx": 0, "fn": self.ask_new_slot,
+                       "back": self.ask_new_project,
+                       "hint": "A choose    B back    a song is a full arrangement you can change"}
+
+    def new_label(self, style, song):
+        if not style:
+            return "NEW PROJECT"
+        return "%s PROJECT" % (style if song is None else styles.SONGS[style][song]["name"])
+
+    def ask_new_slot(self, choice):
         """NEW keeps the open project and starts the new one in the first empty slot."""
-        what = "%s PROJECT" % style if style else "NEW PROJECT"
+        style, song = choice
+        what = self.new_label(style, song)
         empty = [n for n in range(1, SLOTS + 1) if n != self.loaded and not os.path.exists(self.slot_path(n))]
         if not empty:
             self.confirm = ("ALL %d SLOTS ARE USED. REPLACE P%02d WITH A %s?" % (SLOTS, self.slot, what),
-                            lambda: self.new_project(style=style))
+                            lambda: self.new_project(style=style, song=song))
             return
 
         def go():
             self.save_project(quiet=True, autosave=True)       # keep what is open
             self.slot = empty[0]
-            self.new_project(quiet=True, style=style)
+            self.new_project(quiet=True, style=style, song=song)
             self.save_project(quiet=True)
-            self.say("%s IN P%02d (P%02d SAVED)%s" % (what, empty[0], keep, ". START PLAYS THE SONG" if style else ""), 4.5)
+            self.say("%s IN P%02d (P%02d SAVED)%s" % (what, empty[0], keep, ". START PLAYS THE SONG" if style and song is not None else ""), 4.5)
         keep = self.loaded
         self.confirm = ("START A %s IN P%02d?" % (what, empty[0]), go)
 
-    def new_project(self, quiet=False, style=None):
+    def new_project(self, quiet=False, style=None, song=0):
+        """Start over in the open slot. `song` picks one of the style's songs (or the starter kit's demo beat);
+        None leaves the patterns empty, so there are only the sounds."""
         self.eng.stop()
         self.loaded, self.pending_bake = self.slot, None
         self.sel = self.cur_step = 0
@@ -691,9 +710,9 @@ class App:
             # A style is a ready-made project: its kit (made on first use, which takes a moment), patterns and song.
             self.say("MAKING THE %s KIT ..." % style, 2)
             self.draw()
-            self.eng.from_dict(styles.project(style, os.path.join(SAMPLES, "styles")))
+            self.eng.from_dict(styles.project(style, os.path.join(SAMPLES, "styles"), song))
             if not quiet:
-                self.say("%s PROJECT: START PLAYS THE SONG" % style, 4)
+                self.say("%s: START PLAYS THE SONG" % self.new_label(style, song) if song is not None else "%s KIT, NOTHING WRITTEN YET" % style, 4)
             return
         self.eng.from_dict({"bpm": 112})
         pads = self.eng.pads
@@ -702,7 +721,8 @@ class App:
         pads[4].choke = pads[5].choke = 1          # closed hat cuts the open hat
         pads[1].rsend, pads[2].rsend = 0.15, 0.25  # a little room on snare and clap
         pads[11].dsend, pads[14].dsend, pads[14].rsend = 0.25, 0.3, 0.15
-        kit.demo_patterns(self.eng.patterns)
+        if song is not None:
+            kit.demo_patterns(self.eng.patterns)
         if not quiet:
             self.say("NEW PROJECT (STARTER KIT)")
 
@@ -1685,6 +1705,8 @@ class App:
         elif b == "B":
             self.picker = None
             prune_cache(self.eng.pads)
+            if pk.get("back"):                      # a second step: B goes to the first, not out
+                pk["back"]()
         elif b == "up":
             pk["idx"] = (pk["idx"] - 1) % len(pk["items"])
         elif b == "down":
@@ -2533,7 +2555,7 @@ class App:
                 "SAVE A COPY": "as a new project in P%02d" % free if free else "no empty slot left",
                 "OPEN": "another project  (%d saved)" % saved if saved else "no other projects yet",
                 "NAME": ("%s  -  A to rename P%02d" % (e.name, self.loaded)) if e.name else "none  -  A to name P%02d" % self.loaded,
-                "NEW": "starter kit, or a style with a full song", "TEMPO": "%d BPM" % round(e.bpm),
+                "NEW": "a kit: its sounds only, or with a full song", "TEMPO": "%d BPM" % round(e.bpm),
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
                 "MIDI OUT": ("channel %d  -  pads send notes, plus clock" % self.midi.out_channel) if self.midi.out_channel
                             else "OFF",

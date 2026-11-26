@@ -31,7 +31,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - On the BEAT page, one press left past step 1 selects the row's name, where A picks a new sound for that pad and a panel shows its waveform
 - Chords: a CHORD setting makes one pad play its sound as a major, minor, 7th or other chord, and KEY CHORDS puts the chords of a major or minor key on the sixteen pads
 - PROJ page: SAVE always saves the open project, SAVE A COPY starts a copy in the first empty slot, OPEN lists the saved projects
-- Four style starters (ambient, techno, house, hip hop), each a synthesized kit of sixteen sounds, seven or eight patterns and a full song chaining them; pick one under NEW on the PROJ page
+- Four style starters (ambient, techno, house, hip hop), each a synthesized kit of sixteen sounds and four full songs for it; under NEW on the PROJ page, start with a kit's sounds only or with one of its songs
 - The right analog stick works as a data wheel on the SOUND and PROJ pages
 - On the BEAT page the left stick changes the tempo and the right stick the selected pad's volume
 
@@ -113,7 +113,7 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 The tests cover the engine and need only NumPy, except `midi`, which runs the whole app without a screen and also needs pygame:
 
 ```
-for t in engine effects sampler robustness styles midi; do python pocketpads/tests/test_$t.py pocketpads; done
+for t in engine effects sampler robustness styles midi new; do python pocketpads/tests/test_$t.py pocketpads; done
 ```
 
 Each prints a line ending in `OK` when it passes.
