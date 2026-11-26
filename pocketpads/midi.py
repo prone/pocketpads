@@ -307,6 +307,217 @@ def ble_parse(packet):
     return out
 
 
+# The SMC-PAD's pad lights do not answer MIDI. Its maker's app sets them over a second Bluetooth channel, and
+# so do we. The protocol was worked out by the smc-pad project (github.com/spectalive/smc-pad, Apache-2.0):
+# a packet is 00 59 <command> <length, 3 bytes> <data> <checksum>; the pad takes colour writes only after its
+# whole settings block has been read once; a read twice a second keeps that session open. Colours are written
+# to the pad's working memory only. We never send its "save" command, so its own colours come back at power-on.
+SMC_WRITE, SMC_NOTIFY = "0000ae41", "0000ae42"       # start of the two characteristics' UUIDs
+SMC_SETTINGS, SMC_CHUNK = 28312, 1009               # size of the settings block, and how much one read asks for
+SMC_FIRST, SMC_STEP, SMC_PADS = 0x414, 26, 32       # where the pads' records are: two banks of sixteen
+
+
+def smc_packet(cmd, data=b""):
+    data = bytes(data)
+    return bytes([0, 0x59, cmd]) + len(data).to_bytes(3, "little") + data + bytes([~sum(data) & 255])
+
+
+def smc_read(region, addr, n):
+    return smc_packet(0x23, bytes([region]) + addr.to_bytes(4, "little") + n.to_bytes(3, "little"))
+
+
+def smc_colour(addr, rgb):
+    return smc_packet(0x22, bytes([5]) + addr.to_bytes(4, "little") + bytes([3, 0, 0]) + bytes(rgb))
+
+
+def smc_pads(settings):
+    """[(address of the colour, (r, g, b))] for the 32 pads in the order they sit on the pad, bank 1 first;
+    [] when the settings do not look the way we know them (other firmware: better no lights than a wrong write)."""
+    out = []
+    for k in range(SMC_PADS):
+        i = SMC_FIRST + k * SMC_STEP
+        rec = settings[i:i + 8]
+        if len(rec) < 8 or rec[0] != 9 or rec[3] != 0x7F or rec[7] != 0xFF:
+            return []
+        out.append((i + 4, tuple(rec[4:7])))
+    return out
+
+
+def smc_name(name):
+    """Is this the full-size SMC-PAD (the Pocket has no knobs or transport, and its lights are untried)?"""
+    return "smc" in name.lower() and "pocket" not in name.lower()
+
+
+class PadLights:
+    """Flashes the pads of one connected SMC-PAD. flash(k) is safe from any thread; all the Bluetooth is in ours."""
+    FLASH = 0.12                           # seconds a pad stays white
+    WHITE = (255, 255, 255)
+
+    def __init__(self, dbus, path, name, log):
+        self.dbus, self.path, self.name, self.log = dbus, path, name, log
+        self.todo = deque(maxlen=64)
+        self.ready = False
+        self.running = True
+        self._wake = os.pipe()
+        for fd in self._wake:
+            os.set_blocking(fd, False)
+        self.rfd = self.wfd = self.bus = self.char = None
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def flash(self, k):
+        if self.ready:
+            self.todo.append(k)
+            self._poke()
+
+    def stop(self):
+        self.running = False
+        self._poke()
+        self.thread.join(timeout=2.0)
+
+    def _poke(self):
+        try:
+            os.write(self._wake[1], b"x")
+        except OSError:
+            pass
+
+    def _open(self):
+        dbus = self.dbus
+        self.bus = dbus.SystemBus(private=True)
+        objects = dbus.Interface(self.bus.get_object("org.bluez", "/"),
+                                 "org.freedesktop.DBus.ObjectManager").GetManagedObjects(timeout=5)
+        chars = {}
+        for p, ifs in objects.items():
+            ch = ifs.get("org.bluez.GattCharacteristic1")
+            if ch and p.startswith(self.path + "/"):
+                chars[str(ch["UUID"]).lower()[:8]] = dbus.Interface(self.bus.get_object("org.bluez", p),
+                                                                    "org.bluez.GattCharacteristic1")
+        if SMC_WRITE not in chars or SMC_NOTIFY not in chars:
+            return False
+        fd, _mtu = chars[SMC_NOTIFY].AcquireNotify({}, timeout=10)
+        self.rfd = fd.take()
+        os.set_blocking(self.rfd, False)
+        self.char = chars[SMC_WRITE]
+        try:                               # a pipe of our own to the pad: no trip through the system per colour
+            fd, _mtu = self.char.AcquireWrite({}, timeout=10)
+            self.wfd = fd.take()
+        except Exception:
+            self.wfd = None
+        return True
+
+    def _send(self, packet):
+        if self.wfd is not None:
+            os.write(self.wfd, packet)
+        else:
+            self.char.WriteValue(self.dbus.Array([self.dbus.Byte(b) for b in packet], signature="y"),
+                                 {"type": "command"}, timeout=5)
+
+    def _drain(self):
+        """What the pad sent since last time; None when it has gone away."""
+        got = b""
+        while True:
+            try:
+                data = os.read(self.rfd, 1024)
+            except BlockingIOError:
+                return got
+            except OSError:
+                return None
+            if not data:
+                return None
+            got += data
+
+    def _ask(self, packet, want, timeout=3.0):
+        import select
+        self._drain()
+        self._send(packet)
+        got, end = b"", time.time() + timeout
+        while len(got) < want and self.running:
+            left = end - time.time()
+            if left <= 0:
+                raise OSError("no answer from the pad")
+            if select.select([self.rfd], [], [], left)[0]:
+                data = self._drain()
+                if data is None:
+                    raise OSError("the pad went away")
+                got += data
+        return got
+
+    def _settings(self):
+        """Read the pad's settings. This is also what makes it accept colours afterwards."""
+        self._ask(smc_packet(0x11), 7)
+        self._ask(smc_read(4, 0, 12), 27)
+        out = b""
+        while len(out) < SMC_SETTINGS and self.running:
+            n = min(SMC_CHUNK, SMC_SETTINGS - len(out))
+            got = self._ask(smc_read(5, len(out), n), 15 + n)      # 6 of header, our 8 back, the bytes, checksum
+            if got[:3] != bytes([0, 0x59, 0x23]):
+                raise OSError("an answer we do not know")
+            out += got[14:14 + n]
+        return out
+
+    def _run(self):
+        import select
+        lit = {}                           # pad -> when it goes back to its own colour
+        pads = []
+        try:
+            if not self._open():
+                return
+            pads = smc_pads(self._settings())
+            if not pads:
+                self.log("pad lights %s: settings not as expected, lights left alone" % self.name)
+                return
+            self.log("pad lights %s: ready" % self.name)
+            self.ready = True
+            poll = time.time() + 0.5
+            while self.running:
+                now = time.time()
+                while self.todo:
+                    k = self.todo.popleft()
+                    if 0 <= k < len(pads):
+                        if k not in lit:
+                            self._send(smc_colour(pads[k][0], self.WHITE))
+                        lit[k] = now + self.FLASH
+                for k in [k for k, t in lit.items() if now >= t]:
+                    self._send(smc_colour(*pads[k]))
+                    del lit[k]
+                if now >= poll:
+                    self._send(smc_read(4, 0, 12))
+                    poll = now + 0.5
+                wait = max(0.0, min([poll] + list(lit.values())) - time.time())
+                for fd in select.select([self.rfd, self._wake[0]], [], [], wait)[0]:
+                    if fd == self.rfd:
+                        if self._drain() is None:
+                            self.running = False
+                    else:
+                        try:
+                            os.read(fd, 64)
+                        except OSError:
+                            pass
+        except Exception as e:             # lights are a nicety: never let them hurt the playing
+            self.log("pad lights %s: %s: %s" % (self.name, type(e).__name__, str(e)[:120]))
+        finally:
+            self.ready = False
+            try:
+                for k in lit:              # leave no pad white behind
+                    self._send(smc_colour(*pads[k]))
+            except Exception:
+                pass
+            # Close our ends before anything else: the system's Bluetooth service has fallen over when a
+            # program left with these still open.
+            for fd in (self.wfd, self.rfd) + self._wake:
+                if fd is not None:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass
+            self.wfd = self.rfd = None
+            try:
+                if self.bus is not None:
+                    self.bus.close()
+            except Exception:
+                pass
+
+
 class BleMidi:
     """Bluetooth controllers in. start() begins a search; .devices names what is connected; what they play
     lands in the same queue as USB controllers' events. Needs the system's dbus Python module and BlueZ."""
@@ -319,18 +530,22 @@ class BleMidi:
         self.error = ""
         self.running = False
         self.search_until = 0.0
-        self._links = {}                   # device path -> {"name", "fd"}
+        self._links = {}                   # device path -> {"name", "fd", "lights"}
+        self._errors = 0
         self.raw_left = int(os.environ.get("PP_MIDI_LOG", 0))      # packets still to be written to the log
         self._scanning = False             # we switched the system's search on
         self._wake = threading.Event()
+
+    def _bus(self):
+        self.bus = self.dbus.SystemBus(private=True)
+        self.om = self.dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
+        self._objects()
 
     def start(self):
         try:
             import dbus
             self.dbus = dbus
-            self.bus = dbus.SystemBus(private=True)
-            self.om = dbus.Interface(self.bus.get_object("org.bluez", "/"), "org.freedesktop.DBus.ObjectManager")
-            self._objects()
+            self._bus()
         except Exception as e:             # no dbus module, no BlueZ, Bluetooth switched off in the system
             self.log("bluetooth midi unavailable: %s" % (str(e)[:200] or type(e).__name__))
             self.error = self.status = "not available: turn Bluetooth on in the system menu"
@@ -377,9 +592,28 @@ class BleMidi:
                 fd, _mtu = self._iface(p, "org.bluez.GattCharacteristic1").AcquireNotify({}, timeout=10)
                 fd = fd.take()
                 os.set_blocking(fd, False)
-                self._links[path] = {"name": str(dev.get("Alias") or dev.get("Name") or "Bluetooth MIDI"), "fd": fd}
+                name = str(dev.get("Alias") or dev.get("Name") or "Bluetooth MIDI")
+                # The full-size SMC-PAD's pads can be lit; the Pocket has not been tried.
+                lights = PadLights(self.dbus, path, name, self.log) if smc_name(name) else None
+                self._links[path] = {"name": name, "fd": fd, "lights": lights}
                 self._trust(path, True)             # while we run, the system reconnects it by itself if it drops
                 return
+
+    def _drop(self, path):
+        link = self._links.pop(path)
+        if link["lights"]:
+            link["lights"].stop()
+        try:
+            os.close(link["fd"])
+        except OSError:
+            pass
+
+    def flash(self, i, block=None):
+        """Flash pad i (0-15) of every SMC-PAD: in the bank of pads it is showing if we know it, else in both."""
+        for link in list(self._links.values()):
+            if link["lights"]:
+                for b in ((block % 2,) if block is not None else (0, 1)):
+                    link["lights"].flash(b * 16 + i)
 
     def _trust(self, path, on):
         try:
@@ -465,8 +699,7 @@ class BleMidi:
                     except OSError:
                         data = b""
                     if not data:                    # the controller went away: look for it again
-                        os.close(fd)
-                        del self._links[fds[fd]]
+                        self._drop(fds[fd])
                         self.search()
                         next_look = 0.0
                         continue
@@ -477,10 +710,27 @@ class BleMidi:
                 if self._wake.is_set():
                     self._wake.clear()
                     next_look = 0.0
+                self._errors = 0
             except Exception as e:                  # Bluetooth must never take the app down
                 self.error = "%s: %s" % (type(e).__name__, str(e)[:80])
-                self.log("bluetooth midi error: %s" % self.error)
+                self._errors += 1
+                if self._errors <= 3:               # not a line every two seconds for as long as it lasts
+                    self.log("bluetooth midi error: %s" % self.error)
                 self._wake.wait(2.0)
+                if self._errors >= 2 and self.running:
+                    # The system's Bluetooth service was restarted: what we held belongs to the old one.
+                    for path in list(self._links):
+                        self._drop(path)
+                    try:
+                        self.bus.close()
+                    except Exception:
+                        pass
+                    try:
+                        self._bus()
+                        self.search()
+                        next_look = 0.0
+                    except Exception:
+                        pass                        # not back yet: the next round tries again
 
     def stop(self):
         self.running = False
@@ -489,6 +739,8 @@ class BleMidi:
         if thread is None:
             return
         thread.join(timeout=2.0)
+        for path in list(self._links):              # lights back to their own colours, and our ends closed
+            self._drop(path)
         try:
             # A connection of its own: the thread may still be inside a slow call on the other one.
             bus = self.dbus.SystemBus(private=True)

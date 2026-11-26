@@ -177,6 +177,7 @@ class App:
         self.knobs = None               # the MIDI KNOBS list while it is open: {"row": n}
         self.midi_last = ""             # the last message a controller sent, shown in that list
         self.midi_block = None          # which sixteen notes the controller's pads last sent (its own pad bank)
+        self.light_seen = [0.0] * NPADS # when each pad last sounded, as far as the controller's lights were told
         self.midi_logged = set()        # messages already written to the log (each kind once)
         self.midi_rep = {}              # note -> pad, for pads repeating while a controller pad is held
         self.midi_seen = 0              # how many MIDI devices were connected last time we looked
@@ -2538,7 +2539,7 @@ class App:
 
     def smc(self):
         """An SMC-PAD is connected (the full-size one: the Pocket has pads only)."""
-        return any("smc" in d.lower() and "pocket" not in d.lower() for d in self.midi_names())
+        return any(midi.smc_name(d) for d in self.midi_names())
 
     def transport(self, what):
         """A controller's transport button."""
@@ -2654,6 +2655,13 @@ class App:
             self.midi_rep.clear()
             self.midi_block = None
         self.midi_seen = len(names)
+        # A controller with lights under its pads shows the bank on screen: a pad that sounds, flashes.
+        base = self.base()
+        for i in range(BANK):
+            t = e.pad_flash[base + i]
+            if t != self.light_seen[base + i]:
+                self.light_seen[base + i] = t
+                self.ble.flash(i, self.midi_block)
         smc = self.smc()
         if smc and self.knob_ccs != self.SMC_KNOBS:     # an SMC-PAD: its two banks of knobs are knobs 1-16
             self.knob_ccs = list(self.SMC_KNOBS)

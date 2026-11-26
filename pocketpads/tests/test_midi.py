@@ -75,3 +75,33 @@ assert P(bytes([0x80, 0x80, 0xC0, 3])) == [("pc", 3)] and P(b"") == [] and P(byt
 a.midi.devices = ["SMC-PAD Pocket"]
 assert not a.smc()
 print("bluetooth packet tests passed")
+# SMC-PAD pad lights: the packets of its maker's protocol, and where a pad's colour is in its settings
+H = bytes.fromhex
+assert midi.smc_packet(0x11) == H("00591100 0000ff")
+assert midi.smc_read(5, 0, 1009) == H("005923080000 05 00000000 f10300 06")
+assert midi.smc_colour(0x418, (0, 0, 0)) == H("0059220b0000 05 18040000 030000 000000 db")
+cfg = bytearray(midi.SMC_SETTINGS)
+for k in range(32):
+    cfg[0x414 + 26 * k:0x414 + 26 * k + 8] = bytes([9, 36 + k, 0, 0x7F, 0xF0, k, 0xF0, 0xFF])
+pads = midi.smc_pads(bytes(cfg))
+assert len(pads) == 32 and pads[0] == (0x418, (0xF0, 0, 0xF0)) and pads[16] == (0x5B8, (0xF0, 16, 0xF0))
+cfg[0x414 + 26 * 5] = 0                     # settings laid out some other way: no lights, no wrong writes
+assert midi.smc_pads(bytes(cfg)) == [] and midi.smc_pads(b"") == []
+assert midi.smc_name("SMC-PAD") and not midi.smc_name("SMC-PAD Pocket") and not midi.smc_name("WIDI Jack")
+# a pad of the bank on screen that sounds is flashed on the controller, in the bank its pads are showing
+seen = []
+a.ble.flash = lambda i, block=None: seen.append((i, block))
+a.sel, a.midi_block = 16, None
+a.tick_midi(); seen.clear()
+a.eng.trigger(16 + 5); a.eng.trigger(3)     # pad 22 is on screen, pad 4 is not
+a.tick_midi()
+assert seen == [(5, None)], seen
+a.midi_block = 1; a.eng.pad_flash[16] += 1; a.tick_midi()
+assert seen[-1] == (0, 1)
+class L:                                    # flash() reaches the right pad of the right bank
+    def __init__(self): self.got = []
+    def flash(self, k): self.got.append(k)
+b = midi.BleMidi(midi.deque()); lt = L(); b._links = {"x": {"name": "SMC-PAD", "fd": -1, "lights": lt}, "y": {"name": "p", "fd": -1, "lights": None}}
+b.flash(5); b.flash(2, 1); b.flash(2, 2)
+assert lt.got == [5, 21, 18, 2], lt.got
+print("pad light tests passed")
