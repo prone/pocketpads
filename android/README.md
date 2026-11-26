@@ -6,7 +6,9 @@ Your own sounds go in a `PocketPads` folder on the device's shared storage (WAV 
 
 MIDI in works over Bluetooth (an M-Vave SMC-PAD: pads confirmed) and should over USB, which is untried. A controller paired in Android's Bluetooth settings is picked up at launch; an unpaired one is found by BLUETOOTH MIDI on the PROJ page. The Java half is in `java/`.
 
-Not there yet: MIDI out and clock, the SMC-PAD's pad lights, the microphone, and MP3 conversion.
+Also working on a Retroid Pocket 4 Pro: the SMC-PAD's pad lights, recording from the microphone, and loading MP3 and other compressed files (through Android's own decoders, in `java/.../PPAudio.java`; AIFF is not among them). MIDI out and clock are built but untried.
+
+Projects, samples and settings are kept in `files/pocketpads-data`, outside the program's folder, because an update empties that one.
 
 ## Build
 

@@ -29,6 +29,7 @@ import glob
 import json
 import math
 import os
+import shutil
 import re
 import struct
 import threading
@@ -55,6 +56,23 @@ HEADROOM = 0.7
 KNEE = 0.7
 MAX_VOICES = 32
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
+# Where the user's own files live: projects, samples, settings. Beside the program everywhere but Android,
+# where the program's folder is emptied by every update, so they get a folder of their own next to it.
+if "ANDROID_ARGUMENT" in os.environ and os.environ.get("ANDROID_PRIVATE"):
+    DATA_DIR = os.path.join(os.environ["ANDROID_PRIVATE"], "pocketpads-data")
+    if not os.path.isdir(DATA_DIR):
+        os.makedirs(DATA_DIR, exist_ok=True)
+        for _name in ("projects", "samples", "state.json", "buttons.json"):     # from before this folder existed
+            _old = os.path.join(APP_DIR, _name)
+            try:
+                if os.path.isdir(_old):
+                    shutil.copytree(_old, os.path.join(DATA_DIR, _name))
+                elif os.path.isfile(_old):
+                    shutil.copy2(_old, DATA_DIR)
+            except OSError:
+                pass
+else:
+    DATA_DIR = APP_DIR
 _RAMP = np.linspace(1.0, 0.0, FADE, dtype=np.float32)
 
 # Musical lengths, in sequencer steps (one step is a sixteenth note).
@@ -575,7 +593,7 @@ def new_pattern():
 
 def _rel(path):
     try:
-        r = os.path.relpath(path, APP_DIR)
+        r = os.path.relpath(path, DATA_DIR)
         return path if r.startswith("..") else r
     except ValueError:
         return path
@@ -1279,7 +1297,7 @@ class Engine:
             p.fin = int(min(2000, max(0, s.get("fin", 0))))
             p.fout = int(min(2000, max(0, s.get("fout", 0))))
             if s.get("path"):
-                path = s["path"] if os.path.isabs(s["path"]) else os.path.join(APP_DIR, s["path"])
+                path = s["path"] if os.path.isabs(s["path"]) else os.path.join(DATA_DIR, s["path"])
                 try:
                     p.load(path)
                     if s.get("name"):

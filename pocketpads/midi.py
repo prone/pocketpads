@@ -100,6 +100,7 @@ class MidiPort:
         self.latency = 0.046
         self.bpm, self.playing = 120.0, False
         self.lib = self.seq = None
+        self.java = None                   # on Android: the Java half, which does the sending
         self.port = -1
         self.running = False
         self._linked = set()
@@ -128,13 +129,29 @@ class MidiPort:
             self.lib, self.seq, self.port = lib, seq, port
             self.client = lib.snd_seq_client_id(seq)
         except (OSError, AttributeError) as e:
-            self.log("midi unavailable: %s" % (str(e)[:200] or type(e).__name__))
-            self.error = "not available on this system"
-            return False
+            if not self._start_android():
+                self.log("midi unavailable: %s" % (str(e)[:200] or type(e).__name__))
+                self.error = "not available on this system"
+                return False
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
         return True
+
+    def _start_android(self):
+        """On Android there is no sequencer: AndroidMidi reads the controllers, and this port only sends."""
+        if "ANDROID_ARGUMENT" not in os.environ:
+            return False
+        try:
+            from jnius import autoclass
+            java = autoclass("io.github.prone.pocketpads.PPMidi")
+            if java.start(autoclass("org.kivy.android.PythonActivity").mActivity):
+                return False
+            self.java = java
+            return True
+        except Exception as e:
+            self.log("android midi out: %s" % str(e)[:160])
+            return False
 
     def scan(self):
         """Connect to every MIDI device present, both directions. Safe to call again and again."""
@@ -184,6 +201,13 @@ class MidiPort:
             self.out.append((time.perf_counter() + self.latency, ch, n, int(min(127, max(1, velocity * 100)))))
 
     def _send(self, ev_type, channel=1, note=0, velocity=0):
+        if self.java is not None:
+            if ev_type in (NOTE_ON, NOTE_OFF):
+                msg = bytes(((0x90 if ev_type == NOTE_ON else 0x80) | (channel - 1), note, velocity))
+            else:
+                msg = bytes(({START: 0xFA, STOP: 0xFC, CLOCK: 0xF8}[ev_type],))
+            self.java.send(msg)
+            return
         ev = Event()
         ev.type, ev.queue = ev_type, QUEUE_DIRECT
         ev.src_port, ev.dst_client, ev.dst_port = self.port, SUBSCRIBERS, UNKNOWN
@@ -201,10 +225,10 @@ class MidiPort:
         while self.running:
             now = time.perf_counter()
             try:
-                if now >= next_scan:
+                if now >= next_scan and lib is not None:
                     self.scan()
                     next_scan = now + 3.0
-                while lib.snd_seq_event_input(seq, ctypes.byref(evp)) >= 0 and evp:
+                while lib is not None and lib.snd_seq_event_input(seq, ctypes.byref(evp)) >= 0 and evp:
                     got = decode(evp.contents.type, evp.contents.data)
                     if got:
                         self.events.append(got)
@@ -254,6 +278,12 @@ class MidiPort:
                 self._send(STOP)
         except Exception:
             pass
+        if self.java is not None:
+            try:
+                import jnius
+                jnius.detach()                     # a thread that called into Java has to say goodbye to it
+            except Exception:
+                pass
 
     def poll(self):
         """Incoming events since the last call."""
@@ -384,8 +414,8 @@ class RawMidi:
 
 class AndroidMidi:
     """Controllers on Android, USB and Bluetooth, through the system's own MIDI service. Stands in for BleMidi:
-    the same start(), search(), stop(), .devices and .status, and events land in the same queue. The Java half
-    is android/java/.../PPMidi.java. In only, for now: no notes or clock out, and no pad lights."""
+    the same start(), search(), stop(), flash(), .devices and .status, and events land in the same queue. The
+    Java half is android/java/.../PPMidi.java. Notes and clock out go through MidiPort, which uses it too."""
     SEARCH_SECONDS = 12
 
     def __init__(self, events, log=lambda msg: None):
@@ -395,6 +425,7 @@ class AndroidMidi:
         self.search_until = 0.0
         self._want_scan = False
         self._note = ""
+        self._lights = {}                           # Bluetooth address -> AndroidPadLights
         self.raw_left = int(os.environ.get("PP_MIDI_LOG", 12 if "ANDROID_ARGUMENT" in os.environ else 0))
 
     def start(self):
@@ -434,7 +465,19 @@ class AndroidMidi:
         self._want_scan = True
 
     def flash(self, i, block=None):
-        pass                                        # pad lights: not on Android yet
+        """Flash pad i (0-15) of every SMC-PAD: in the bank of pads it is showing if we know it, else in both."""
+        for lights in list(self._lights.values()):
+            for b in ((block % 2,) if block is not None else (0, 1)):
+                lights.flash(b * 16 + i)
+
+    def _look_lights(self):
+        """Start the lights of an SMC-PAD that has connected, and forget one that has gone."""
+        there = dict(line.split("\t", 1) for line in str(self.java.lights()).split("\n") if "\t" in line)
+        for addr in [a for a, l in self._lights.items() if a not in there or not l.thread.is_alive()]:
+            self._lights.pop(addr).stop()
+        for addr, name in there.items():
+            if addr not in self._lights and smc_name(name):
+                self._lights[addr] = AndroidPadLights(self.java, addr, name, self.log)
 
     def _run(self):
         parser, last_names = RawMidi(), 0.0
@@ -476,6 +519,7 @@ class AndroidMidi:
                     if note != self._note:          # what the Java half has to say, once each
                         self._note = note
                         self.log("android midi: %s" % note[:300])
+                    self._look_lights()
                     names = [n for n in str(self.java.devices()).split("\n") if n]
                     if names != self.devices:
                         self.log("android midi devices: %s" % (", ".join(names) or "none"))
@@ -500,6 +544,9 @@ class AndroidMidi:
             return
         self.running = False
         self.thread.join(timeout=2.0)
+        for lights in list(self._lights.values()):  # first, so no pad is left white
+            lights.stop()
+        self._lights = {}
         try:
             self.java.stop()
         except Exception as e:
@@ -625,8 +672,33 @@ class PadLights:
                 return None
             got += data
 
-    def _ask(self, packet, want, timeout=3.0):
+    def _wait(self, timeout):
+        """Sleep until the pad says something, flash() or stop() wakes us, or the time is up."""
         import select
+        for fd in select.select([self.rfd, self._wake[0]], [], [], max(0.0, timeout))[0]:
+            if fd != self.rfd:
+                try:
+                    os.read(fd, 64)
+                except OSError:
+                    pass
+
+    def _close(self):
+        # Close our ends before anything else: the system's Bluetooth service has fallen over when a
+        # program left with these still open.
+        for fd in (self.wfd, self.rfd) + self._wake:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+        self.wfd = self.rfd = None
+        try:
+            if self.bus is not None:
+                self.bus.close()
+        except Exception:
+            pass
+
+    def _ask(self, packet, want, timeout=3.0):
         self._drain()
         self._send(packet)
         got, end = b"", time.time() + timeout
@@ -634,11 +706,11 @@ class PadLights:
             left = end - time.time()
             if left <= 0:
                 raise OSError("no answer from the pad")
-            if select.select([self.rfd], [], [], left)[0]:
-                data = self._drain()
-                if data is None:
-                    raise OSError("the pad went away")
-                got += data
+            self._wait(left)
+            data = self._drain()
+            if data is None:
+                raise OSError("the pad went away")
+            got += data
         return got
 
     def _settings(self):
@@ -655,7 +727,6 @@ class PadLights:
         return out
 
     def _run(self):
-        import select
         lit = {}                           # pad -> when it goes back to its own colour
         pads = []
         try:
@@ -682,16 +753,10 @@ class PadLights:
                 if now >= poll:
                     self._send(smc_read(4, 0, 12))
                     poll = now + 0.5
-                wait = max(0.0, min([poll] + list(lit.values())) - time.time())
-                for fd in select.select([self.rfd, self._wake[0]], [], [], wait)[0]:
-                    if fd == self.rfd:
-                        if self._drain() is None:
-                            self.running = False
-                    else:
-                        try:
-                            os.read(fd, 64)
-                        except OSError:
-                            pass
+                if not self.todo:
+                    self._wait(min([poll] + list(lit.values())) - time.time())
+                if self._drain() is None:  # the pad has gone
+                    self.running = False
         except Exception as e:             # lights are a nicety: never let them hurt the playing
             self.log("pad lights %s: %s: %s" % (self.name, type(e).__name__, str(e)[:120]))
         finally:
@@ -701,20 +766,45 @@ class PadLights:
                     self._send(smc_colour(*pads[k]))
             except Exception:
                 pass
-            # Close our ends before anything else: the system's Bluetooth service has fallen over when a
-            # program left with these still open.
-            for fd in (self.wfd, self.rfd) + self._wake:
-                if fd is not None:
-                    try:
-                        os.close(fd)
-                    except OSError:
-                        pass
-            self.wfd = self.rfd = None
-            try:
-                if self.bus is not None:
-                    self.bus.close()
-            except Exception:
-                pass
+            self._close()
+
+
+class AndroidPadLights(PadLights):
+    """The same lights, reached through the Java half's connection to the pad instead of the Linux Bluetooth service."""
+
+    def __init__(self, java, addr, name, log):
+        self.java, self.addr, self.name, self.log = java, addr, name, log
+        self.todo = deque(maxlen=64)
+        self.ready = False
+        self.running = True
+        self._event = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _poke(self):
+        self._event.set()
+
+    def _open(self):
+        return True
+
+    def _send(self, packet):
+        if not self.java.smcWrite(self.addr, bytes(packet)):
+            raise OSError("the pad went away")
+
+    def _drain(self):
+        raw = self.java.smcPoll(self.addr)
+        return None if raw is None else bytes(b & 255 for b in raw)
+
+    def _wait(self, timeout):
+        self._event.wait(min(max(0.0, timeout), 0.01))     # the pad's answers are collected, not announced
+        self._event.clear()
+
+    def _close(self):
+        try:
+            import jnius
+            jnius.detach()
+        except Exception:
+            pass
 
 
 class BleMidi:

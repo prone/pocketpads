@@ -19,14 +19,14 @@ import pygame
 import kit
 import midi
 import styles
-from engine import (APP_DIR, BANK, BLOCK, CHORD_MAX_SECONDS, CHORDS, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NAME_CHARS, NAME_MAX, NBANKS, NPADS, NPAT,
+from engine import (APP_DIR, DATA_DIR, BANK, BLOCK, CHORD_MAX_SECONDS, CHORDS, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NAME_CHARS, NAME_MAX, NBANKS, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine, clean_name,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
 
-SAMPLES = os.path.join(APP_DIR, "samples")
-PROJECTS = os.path.join(APP_DIR, "projects")
-STATE = os.path.join(APP_DIR, "state.json")
+SAMPLES = os.path.join(DATA_DIR, "samples")
+PROJECTS = os.path.join(DATA_DIR, "projects")
+STATE = os.path.join(DATA_DIR, "state.json")
 PAGES = ["PLAY", "BEAT", "SONG", "SOUND", "FX", "PROJ"]
 VERSION = "0.5"
 CONVERT_EXTS = (".mp3", ".flac", ".ogg", ".m4a", ".aac", ".aif", ".aiff", ".opus")   # read through ffmpeg
@@ -96,6 +96,28 @@ def mix(a, b, t):
             _MIXED.clear()
         c = _MIXED[key] = tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
     return c
+
+
+class AndroidRecorder:
+    """Stands in for the arecord process on Android: the recording itself is done by PPAudio.java."""
+
+    def __init__(self, java, path, seconds):
+        self.java, self.stderr = java, self
+        why = java.record(path, seconds)
+        if why:
+            raise OSError(why)
+
+    def poll(self):
+        return None if self.java.recording() else 0
+
+    def read(self):
+        return str(self.java.recordError()).encode("utf-8", "replace")
+
+    def send_signal(self, _signal):
+        self.java.recordStop()
+
+    def kill(self):
+        self.java.recordStop()
 
 
 class App:
@@ -366,7 +388,7 @@ class App:
     def joy_map(self):
         if not hasattr(self, "_joy_map"):
             try:
-                with open(os.path.join(APP_DIR, "buttons.json")) as f:
+                with open(os.path.join(DATA_DIR, "buttons.json")) as f:
                     self._joy_map = json.load(f)
             except (OSError, ValueError):
                 # Android (experimental build): SDL numbers a built-in gamepad's buttons the same way everywhere.
@@ -1302,7 +1324,7 @@ class App:
             self.say("NOTHING WAS PLAYING", 3)
             return
         audio = audio[max(0, loud[0] - 64):loud[-1] + 2205]
-        folder = os.path.join(APP_DIR, "samples", "resampled")
+        folder = os.path.join(DATA_DIR, "samples", "resampled")
         os.makedirs(folder, exist_ok=True)
         path = self.unused_path(folder, time.strftime("RS %Y-%m-%d %H-%M-%S"))
         try:
@@ -1557,10 +1579,25 @@ class App:
     def start_record(self):
         """Record from the built-in microphone; the take is chopped onto the pads when it ends."""
         self.eng.stop()
-        folder = os.path.join(APP_DIR, "samples", "recorded")
+        folder = os.path.join(DATA_DIR, "samples", "recorded")
         os.makedirs(folder, exist_ok=True)
         path = self.unused_path(folder, time.strftime("REC %Y-%m-%d %H-%M-%S"))
         fake = os.environ.get("PP_REC_FAKE")
+        if ANDROID and not fake:
+            try:
+                from android.permissions import check_permission, request_permissions
+                if not check_permission("android.permission.RECORD_AUDIO"):
+                    request_permissions(["android.permission.RECORD_AUDIO"])
+                    self.say("ALLOW THE MICROPHONE, THEN RECORD AGAIN", 5)
+                    return
+                from jnius import autoclass
+                proc = AndroidRecorder(autoclass("io.github.prone.pocketpads.PPAudio"), path, REC_SECONDS)
+            except Exception as e:
+                self.say(("CANNOT RECORD: %s" % e)[:60], 4)
+                return
+            self.recording = {"proc": proc, "path": path, "t0": time.time(), "level": 0.0}
+            self.logline("record start: android microphone")
+            return
         if fake:
             cmd = ["cp", fake, path]
         else:
@@ -1895,6 +1932,22 @@ class App:
         self.say("CONVERTING %s ..." % os.path.basename(src)[:36], 60)
         self.draw()
         tmp = out + ".part"
+        if ANDROID:                                 # no ffmpeg there: the system's own decoders, through PPAudio.java
+            try:
+                from jnius import autoclass
+                why = autoclass("io.github.prone.pocketpads.PPAudio").decode(src, tmp, CONVERT_SECONDS)
+            except Exception as e:
+                why = str(e) or type(e).__name__
+            finally:
+                self.toast_until = 0
+            if why or not os.path.exists(tmp) or os.path.getsize(tmp) < 1000:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise ValueError((why or "not an audio file")[-40:])
+            os.replace(tmp, out)
+            return out
         try:
             r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-protocol_whitelist", "file", "-i", src, "-t", str(CONVERT_SECONDS), "-vn", "-ac", "2",
                                 "-ar", str(SR), "-c:a", "pcm_s16le", "-f", "wav", tmp],
