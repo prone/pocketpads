@@ -261,13 +261,53 @@ class App:
         """Work out the scale. The pages are drawn 640 by 360; with the on-screen buttons up there is a
         strip of TOUCH_W on each side of that for them."""
         wide = 640 + (2 * TOUCH_W if self.touch_ui else 0)
-        self.u = min(self.W / float(wide), self.H / 360.0)
-        self.ox = (self.W - 640 * self.u) / 2
-        self.oy = (self.H - 360 * self.u) / 2
+        # Stay clear of a camera cutout or rounded corner: the app is drawn edge to edge (see screen_insets).
+        left, top, right, bottom = self.insets = self.screen_insets()
+        w, h = max(1, self.W - left - right), max(1, self.H - top - bottom)
+        self.u = min(w / float(wide), h / 360.0)
+        self.ox = left + (w - 640 * self.u) / 2
+        self.oy = top + (h - 360 * self.u) / 2
         self.fonts = {k: pygame.font.Font(None, max(8, int(s * self.u)))
                       for k, s in (("s", 13), ("h", 16), ("m", 17), ("l", 26), ("xl", 40))}
         self.cache = {}
         self.geom, self.waves, self.hint_rows, self.frame = {}, {}, {}, []
+
+    def screen_insets(self):
+        """How far in from each edge (left, top, right, bottom, in pixels) the screen is cut into by a camera
+        or a curved corner. Android only; nothing anywhere else. PP_INSETS=l,t,r,b sets it by hand."""
+        fake = os.environ.get("PP_INSETS")
+        if fake:
+            return tuple(int(v) for v in fake.split(","))
+        if not ANDROID:
+            return (0, 0, 0, 0)
+        try:
+            from jnius import autoclass
+            view = autoclass("org.kivy.android.PythonActivity").mActivity.getWindow().getDecorView()
+            insets = view.getRootWindowInsets()
+            cut = insets.getDisplayCutout() if insets is not None else None
+            if cut is None:
+                return (0, 0, 0, 0)
+            return (cut.getSafeInsetLeft(), cut.getSafeInsetTop(), cut.getSafeInsetRight(), cut.getSafeInsetBottom())
+        except Exception as e:              # an Android too old to say (before 9): it has no cutouts either
+            if not getattr(self, "_insets_logged", False):
+                self._insets_logged = True
+                self.logline("screen insets: %r" % e)
+            return (0, 0, 0, 0)
+
+    def fit_window(self):
+        """The window may have changed size or shape (a rotated tablet, a folded phone, a split screen, or
+        Android settling the size after launch): draw to what is there now."""
+        surf = pygame.display.get_surface()
+        if surf is None:
+            return
+        if surf.get_size() != (self.W, self.H):
+            self.display = surf
+            self.screen = pygame.Surface(surf.get_size())
+            self.W, self.H = surf.get_size()
+            self.logline("screen now %dx%d" % (self.W, self.H))
+            self.lay_out()
+        elif self.screen_insets() != self.insets:
+            self.lay_out()
 
     def logline(self, msg):
         self.log.write("%.2f %s\n" % (time.time() % 10000, msg))
@@ -323,11 +363,13 @@ class App:
 
     # The system showed our window again, or gave it a new surface: what we drew before may be gone.
     REPAINT = tuple(getattr(pygame, n) for n in ("WINDOWEXPOSED", "WINDOWSHOWN", "WINDOWRESTORED", "WINDOWFOCUSGAINED",
-                                                 "WINDOWSIZECHANGED", "VIDEOEXPOSE", "APP_DIDENTERFOREGROUND")
+                                                 "WINDOWSIZECHANGED", "WINDOWRESIZED", "VIDEORESIZE", "VIDEOEXPOSE",
+                                                 "APP_DIDENTERFOREGROUND")
                     if hasattr(pygame, n))
 
     def handle_event(self, e):
         if e.type in self.REPAINT:
+            self.fit_window()
             self.frame = []                         # the next frame is drawn in full, not just what changed
             self.repaint_until = time.time() + 2.0
         if e.type in (pygame.JOYBUTTONDOWN, pygame.CONTROLLERBUTTONDOWN, pygame.JOYHATMOTION) and not self.real_buttons:

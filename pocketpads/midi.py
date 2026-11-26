@@ -443,11 +443,12 @@ class AndroidMidi:
         self.running = True
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
-        self.search()
+        self.search(ask=False)                      # at launch only if already allowed: no question out of the blue
         return True
 
-    def search(self):
-        """Look for Bluetooth controllers for a few seconds. Asks for the Bluetooth permission the first time."""
+    def search(self, ask=True):
+        """Look for Bluetooth controllers for a few seconds. Asks for the Bluetooth permission the first time
+        the user starts a search (BLUETOOTH MIDI on the PROJ page)."""
         if not self.running:
             return
         self.search_until = time.time() + self.SEARCH_SECONDS
@@ -459,6 +460,9 @@ class AndroidMidi:
             else:                                   # Android 11 and older: a search needs the location permission
                 need = ["android.permission.ACCESS_FINE_LOCATION"]
             missing = [p for p in need if not check_permission(p)]
+            if missing and not ask:
+                self.search_until = 0.0
+                return
             if missing:
                 # The answer comes on another thread; the scan starts from ours once it is yes.
                 request_permissions(need, lambda perms, grants: setattr(self, "_want_scan", True))

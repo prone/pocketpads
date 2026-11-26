@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PocketPads privacy policy</title>
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/touch-icon.png">
+<meta name="description" content="PocketPads collects no data. What the app can reach on your device, and why.">
+<style>
+@font-face {
+  font-family: "Bricolage";
+  src: url("fonts/BricolageGrotesque.ttf") format("truetype");
+  font-weight: 200 800;
+  font-stretch: 75% 100%;
+  font-display: swap;
+}
+:root {
+  --paper: #f3eee4;
+  --paper-deep: #e9e2d3;
+  --ink: #1c1a17;
+  --ink-soft: #57503f;
+  --rule: #cfc5b0;
+  --orange: #b54708;
+  --orange-bright: #ff983e;
+  --teal: #0d7d6c;
+  --screen: #111217;
+  --key: #26252a;
+  --body: ui-sans-serif, -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --display: "Bricolage", var(--body);
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 4.5rem; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 1.0625rem/1.6 var(--body);
+  -webkit-font-smoothing: antialiased;
+  caret-color: var(--orange);
+}
+::selection { background: var(--orange-bright); color: var(--ink); }
+:focus-visible { outline: 3px solid var(--orange); outline-offset: 3px; border-radius: 4px; }
+a { color: var(--orange); text-underline-offset: 0.2em; text-decoration-thickness: 1.5px; }
+a:hover { color: var(--ink); }
+html { scrollbar-color: var(--rule) var(--paper); }
+
+.nav { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--paper) 92%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--rule); }
+.nav-inner { max-width: 72rem; margin: 0 auto; padding: 0.7rem 1.5rem; display: flex; align-items: baseline; gap: 1.75rem; overflow-x: auto; }
+.nav strong { font: 700 1.15rem/1 var(--display); letter-spacing: -0.02em; white-space: nowrap; }
+.nav strong a { color: var(--ink); text-decoration: none; }
+.nav a { color: var(--ink-soft); text-decoration: none; font-size: 0.95rem; white-space: nowrap; }
+.nav a:hover { color: var(--orange); }
+main { max-width: 46rem; margin: 0 auto; padding: 3.5rem 1.5rem 5rem; }
+h1, h2 { font-family: var(--display); letter-spacing: -0.03em; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2.4rem, 7vw, 4rem); font-weight: 800; line-height: 0.95; font-stretch: 85%; margin-bottom: 1rem; }
+h2 { font-size: 1.5rem; font-weight: 700; line-height: 1.1; margin: 2.5rem 0 0.75rem; }
+p, li { max-width: 64ch; }
+p { margin: 0 0 1.05rem; }
+.lede { font-size: 1.25rem; line-height: 1.45; }
+.date { color: var(--ink-soft); font-size: 0.95rem; }
+table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1.25rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.6rem 0.9rem 0.6rem 0; border-bottom: 1px solid var(--rule); }
+th { font-size: 0.82rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); font-weight: 600; }
+td:first-child { font-weight: 600; white-space: nowrap; }
+.wrap { overflow-x: auto; }
+footer { max-width: 46rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top: 1px solid var(--rule); color: var(--ink-soft); font-size: 0.92rem; }
+@media (max-width: 34rem) { td:first-child { white-space: normal; } }
+</style>
+</head>
+<body>
+
+<nav class="nav" aria-label="Site">
+  <div class="nav-inner">
+    <strong><a href="index.html">PocketPads</a></strong>
+    <a href="index.html">Overview</a>
+    <a href="guide.html">Full guide</a>
+    <a href="privacy.html" aria-current="page">Privacy</a>
+  </div>
+</nav>
+
+<main>
+<h1>Privacy policy</h1>
+<p class="date">Last updated 25 November 2026. Applies to PocketPads on every device it runs on, including the Android app.</p>
+
+<p class="lede">PocketPads collects nothing. It has no accounts, no ads and no analytics, and the Android app does not have permission to use the internet at all. Everything you make stays on your device.</p>
+
+<h2>What stays on your device</h2>
+<p>Your projects, the samples you load, the sounds the app makes, your settings and anything you record are saved as ordinary files in the app's own storage on the device. Nothing is uploaded, and no one else, including the author, can see any of it. Removing the app removes those files.</p>
+
+<h2>What the Android app asks for, and why</h2>
+<p>Android asks your permission before the app can use each of these. You can refuse any of them and the rest of the app still works, and you can change your mind later in Android's settings.</p>
+<div class="wrap">
+<table>
+  <thead><tr><th>Permission</th><th>What it is used for</th><th>What happens to it</th></tr></thead>
+  <tbody>
+    <tr><td>Microphone</td><td>Recording a sound to put on the pads, only when you choose RECORD MIC and only until the recording ends.</td><td>Saved as a WAV file on the device. Never sent anywhere.</td></tr>
+    <tr><td>Music and audio</td><td>Showing and loading the audio files you put in the <code>Music/PocketPads</code> folder, so you can use your own samples.</td><td>Files are read where they are. The app looks at audio files only, not photos, videos or documents.</td></tr>
+    <tr><td>Nearby devices (Bluetooth)</td><td>Finding and connecting to Bluetooth MIDI controllers, such as a pad controller.</td><td>Used only to exchange notes and controller messages with the controller. Not used to work out where you are.</td></tr>
+    <tr><td>Location</td><td>Asked for only on Android 11 and older, where Android does not allow a Bluetooth search without it.</td><td>The app never reads your location.</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>What is shared</h2>
+<p>Nothing. The app sends no data to the author or to anyone else, and contains no third-party advertising or tracking code. A file leaves your device only when you copy it off yourself, for example a song you exported.</p>
+
+<h2>Children</h2>
+<p>PocketPads is a music tool for a general audience. Because it collects no information from anyone, it collects none from children.</p>
+
+<h2>This website</h2>
+<p>These pages set no cookies and run no analytics or tracking scripts. Like any website, the company that hosts it may keep standard server logs of requests.</p>
+
+<h2>Changes</h2>
+<p>If the app ever changes in a way that affects any of this, this page will be updated first and the date at the top will change. PocketPads is open source, so what it does can be checked in <a href="https://github.com/prone/pocketpads">its code</a>.</p>
+
+<h2>Questions</h2>
+<p>Ask on the project's <a href="https://github.com/prone/pocketpads/issues">issue tracker on GitHub</a>.</p>
+</main>
+
+<footer>
+  PocketPads is a personal project by <a href="https://sakedo.co/">prone</a>. <a href="index.html">Overview</a> · <a href="guide.html">Full guide</a>
+</footer>
+
+</body>
+</html>

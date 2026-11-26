@@ -73,4 +73,9 @@ assert len(a.namer["text"]) == n0 + 1 or n0 >= 12, a.namer; a.tap_button("B")
 # a physical button takes the on-screen ones away
 a.handle_event(pygame.event.Event(pygame.JOYBUTTONDOWN, button=99, instance_id=0, joy=0)); assert not a.touch_ui and a.u == u0
 tap(40, 300); assert not a.touch_ui
+# a camera cutout: the page keeps clear of it, and touches still land where things are drawn
+os.environ["PP_INSETS"] = "120,0,0,30"
+a.fit_window(); assert a.insets == (120, 0, 0, 30) and a.ox >= 120 and a.oy + 360 * a.u <= a.H - 30 + 1e-6, (a.insets, a.ox, a.oy)
+a.page = 0; tap(270, 60); assert a.sel == 15
+del os.environ["PP_INSETS"]; a.fit_window(); assert a.insets == (0, 0, 0, 0) and a.u == u0
 print("ALL TOUCH OK")

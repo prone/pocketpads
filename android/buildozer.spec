@@ -25,7 +25,10 @@ android.presplash_color = #111217
 orientation = landscape
 fullscreen = 1
 android.archs = arm64-v8a
-android.api = 34
+# The Play Store takes new apps that target Android 16 (API 36) or newer.
+android.api = 36
+# Android 16 keeps the back gesture from apps unless they say this; PocketPads uses it as the B button.
+android.extra_manifest_application_arguments = ./manifest_application.txt
 android.minapi = 24
 android.accept_sdk_license = True
 p4a.bootstrap = sdl2
