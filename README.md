@@ -113,7 +113,7 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 The tests cover the engine and need only NumPy, except `midi`, which runs the whole app without a screen and also needs pygame:
 
 ```
-for t in engine effects sampler robustness styles midi new; do python pocketpads/tests/test_$t.py pocketpads; done
+for t in engine effects sampler robustness styles midi new touch; do python pocketpads/tests/test_$t.py pocketpads; done
 ```
 
 Each prints a line ending in `OK` when it passes.

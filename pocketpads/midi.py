@@ -453,9 +453,12 @@ class AndroidMidi:
         self.search_until = time.time() + self.SEARCH_SECONDS
         try:
             from android.permissions import check_permission, request_permissions
-            need = ["android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT",
-                    "android.permission.ACCESS_FINE_LOCATION"]
-            missing = [p for p in need[:2] if not check_permission(p)]
+            from jnius import autoclass
+            if autoclass("android.os.Build$VERSION").SDK_INT >= 31:
+                need = ["android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT"]
+            else:                                   # Android 11 and older: a search needs the location permission
+                need = ["android.permission.ACCESS_FINE_LOCATION"]
+            missing = [p for p in need if not check_permission(p)]
             if missing:
                 # The answer comes on another thread; the scan starts from ours once it is yes.
                 request_permissions(need, lambda perms, grants: setattr(self, "_want_scan", True))

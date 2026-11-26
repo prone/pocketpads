@@ -60,6 +60,7 @@ TEXT, DIM = (228, 229, 235), (128, 132, 148)
 TEAL, ORANGE, RED, DARK = (62, 205, 182), (255, 152, 62), (236, 84, 84), (10, 11, 14)
 
 DIRS = ("up", "down", "left", "right")
+TOUCH_W = 110                       # width of each strip of on-screen buttons, in the pages' units
 # Drum mode: these eight buttons play pads while L2 (the bank's first eight pads) or R2 (the other eight) is held.
 DRUM_KEYS = ["left", "up", "right", "down", "Y", "X", "A", "B"]
 DRUM_GLYPH = {"left": "<", "up": "^", "right": ">", "down": "v"}
@@ -82,7 +83,11 @@ ANDROID_BUTTONS = {"0": "A", "1": "B", "2": "X", "3": "Y", "4": "select", "6": "
 # Joystick axes as SDL gives them on Android: left stick, right stick, then the two triggers.
 ANDROID_AXES = {0: "lx", 1: "ly", 2: "rx", 3: "ry", 4: "l2", 5: "r2"}
 # Android: a folder on the device's shared storage that sounds can be dropped into from a computer or file manager.
-SHARED = os.path.join(os.environ.get("EXTERNAL_STORAGE", "/sdcard"), "PocketPads") if ANDROID else None
+# Android: folders in the shared storage where the user drops samples. The app may make and fill a folder of
+# its own under Music without asking; reading what other apps put there takes the "music and audio" permission.
+_EXT = os.environ.get("EXTERNAL_STORAGE", "/sdcard")
+SHARED = os.path.join(_EXT, "Music", "PocketPads") if ANDROID else None
+SHARED_OLD = os.path.join(_EXT, "PocketPads") if ANDROID else None     # where earlier builds looked
 
 _MIXED = {}
 
@@ -144,12 +149,10 @@ class App:
         pygame.display.set_caption("PocketPads")
         pygame.mouse.set_visible(False)
         self.W, self.H = self.screen.get_size()
-        self.u = min(self.W / 640.0, self.H / 360.0)
-        self.ox = (self.W - 640 * self.u) / 2
-        self.oy = (self.H - 360 * self.u) / 2
-        self.fonts = {k: pygame.font.Font(None, max(8, int(s * self.u)))
-                      for k, s in (("s", 13), ("h", 16), ("m", 17), ("l", 26), ("xl", 40))}
-        self.cache = {}
+        self.touch_ui = False           # the on-screen buttons at the sides are showing (see touch_down)
+        self.touches = {}               # finger -> the button it is holding down
+        self.real_buttons = False       # a physical button has been pressed: this device needs no on-screen ones
+        self.lay_out()
         self.logline("screen %dx%d scale %.2f" % (self.W, self.H, self.u))
         self.splash("LOADING")
         splash_until = time.time() + (0 if os.environ.get("PP_SCRIPT") and not os.environ.get("PP_SPLASH") else 1.5)
@@ -254,6 +257,18 @@ class App:
             self.logline("audio error: " + self.eng.audio_error)
             self.say("NO AUDIO: " + self.eng.audio_error, 6)
 
+    def lay_out(self):
+        """Work out the scale. The pages are drawn 640 by 360; with the on-screen buttons up there is a
+        strip of TOUCH_W on each side of that for them."""
+        wide = 640 + (2 * TOUCH_W if self.touch_ui else 0)
+        self.u = min(self.W / float(wide), self.H / 360.0)
+        self.ox = (self.W - 640 * self.u) / 2
+        self.oy = (self.H - 360 * self.u) / 2
+        self.fonts = {k: pygame.font.Font(None, max(8, int(s * self.u)))
+                      for k, s in (("s", 13), ("h", 16), ("m", 17), ("l", 26), ("xl", 40))}
+        self.cache = {}
+        self.geom, self.waves, self.hint_rows, self.frame = {}, {}, {}, []
+
     def logline(self, msg):
         self.log.write("%.2f %s\n" % (time.time() % 10000, msg))
 
@@ -315,11 +330,32 @@ class App:
         if e.type in self.REPAINT:
             self.frame = []                         # the next frame is drawn in full, not just what changed
             self.repaint_until = time.time() + 2.0
+        if e.type in (pygame.JOYBUTTONDOWN, pygame.CONTROLLERBUTTONDOWN, pygame.JOYHATMOTION) and not self.real_buttons:
+            self.real_buttons = True                # it has buttons of its own: take the on-screen ones away
+            if self.touch_ui and os.environ.get("PP_TOUCH") != "1":
+                self.touch_ui = False
+                self.lay_out()
         if e.type == pygame.QUIT:
             self.running = False
+        elif e.type == pygame.FINGERDOWN:
+            self.touch_down(e.finger_id, e.x * self.W, e.y * self.H)
+        elif e.type == pygame.FINGERMOTION:
+            self.touch_move(e.finger_id, e.x * self.W, e.y * self.H)
+        elif e.type == pygame.FINGERUP:
+            self.touch_up(e.finger_id)
+        elif e.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+            if not getattr(e, "touch", False) and not ANDROID:      # a real mouse; a finger already came as FINGER events
+                if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                    self.touch_down("mouse", *e.pos)
+                elif e.type == pygame.MOUSEBUTTONUP and e.button == 1:
+                    self.touch_up("mouse")
+                elif e.type == pygame.MOUSEMOTION:
+                    self.touch_move("mouse", *e.pos)
         elif e.type == pygame.KEYDOWN:
             if e.key == pygame.K_ESCAPE:
                 self.running = False
+            elif e.key == getattr(pygame, "K_AC_BACK", -1):         # Android's back gesture is B
+                self.tap_button("B")
             elif e.key in KEYS:
                 self.button(KEYS[e.key], True)
         elif e.type == pygame.KEYUP and e.key in KEYS:
@@ -384,6 +420,223 @@ class App:
             for d in self.hat_state - now:
                 self.button(d, False)
             self.hat_state = now
+
+    # ------------------------------------------------------------ touch
+    # Every control also works by touch. On a device with no buttons of its own (a phone), the buttons are
+    # drawn at the sides of the screen and do exactly what the physical ones do, so nothing is out of reach.
+    # On top of that the obvious things answer a finger directly: pads, page tabs, pattern letters, steps,
+    # rows of a list, the keys of the name keyboard, and dialogs (on it for yes, beside it for no).
+    def touch_buttons(self):
+        """The on-screen buttons as {name: (x, y, w, h)}, in the same units as the pages (which span 0 to 640)."""
+        L, R = -TOUCH_W + 6, 640 + 6
+        w = TOUCH_W - 12
+        cl, cr, cy = -TOUCH_W / 2.0, 640 + TOUCH_W / 2.0, 186
+        d = 36                              # size of a d-pad arm and of a face button
+        return {"l2": (L, 6, w, 36), "l1": (L, 48, w, 36), "select": (L, 318, w, 36),
+                "up": (cl - d / 2, cy - d * 1.5, d, d), "down": (cl - d / 2, cy + d / 2, d, d),
+                "left": (cl - d * 1.5, cy - d / 2, d, d), "right": (cl + d / 2, cy - d / 2, d, d),
+                "r2": (R, 6, w, 36), "r1": (R, 48, w, 36), "start": (R, 318, w, 36),
+                "X": (cr - d / 2, cy - d * 1.5, d, d), "B": (cr - d / 2, cy + d / 2, d, d),
+                "Y": (cr - d * 1.5, cy - d / 2, d, d), "A": (cr + d / 2, cy - d / 2, d, d)}
+
+    TOUCH_LABELS = {"up": "^", "down": "v", "left": "<", "right": ">", "l1": "L1", "l2": "L2", "r1": "R1", "r2": "R2",
+                    "select": "SELECT", "start": "START"}
+
+    def draw_touch(self):
+        btns = self.touch_buttons()
+        for side, x in (("l", -TOUCH_W), ("r", 640)):
+            self.area(x, 0, TOUCH_W, 360)
+            for name, (bx, by, bw, bh) in btns.items():
+                if (bx < 0) != (side == "l"):
+                    continue
+                on = name in self.held
+                face = name in "ABXY"
+                self.box(bx, by, bw, bh, TEAL if on else PANEL, None if on else LINE, 18 if face else 6)
+                self.text(self.TOUCH_LABELS.get(name, name), bx + bw / 2, by + bh / 2, "m" if len(name) > 2 else "l",
+                          DARK if on else TEXT, "c")
+
+    def touch_button_at(self, lx, ly):
+        """The on-screen button nearest a point in a side strip: the whole strip answers, not just the drawn shapes."""
+        best, near = None, 1e9
+        for name, (bx, by, bw, bh) in self.touch_buttons().items():
+            if (bx < 0) != (lx < 0):
+                continue
+            dx = max(bx - lx, 0, lx - (bx + bw))
+            dy = max(by - ly, 0, ly - (by + bh))
+            if dx * dx + dy * dy < near:
+                best, near = name, dx * dx + dy * dy
+        return best
+
+    def tap_button(self, name):
+        self.button(name, True)
+        self.button(name, False)
+
+    def touch_down(self, finger, px, py):
+        if not self.touch_ui and not self.real_buttons and os.environ.get("PP_TOUCH") != "0":
+            # The first touch on a device where no button has been pressed: bring up the on-screen buttons.
+            # The page shrinks to make room, so this touch only does that.
+            self.touch_ui = True
+            self.lay_out()
+            return
+        lx, ly = (px - self.ox) / self.u, (py - self.oy) / self.u
+        self.touch_up(finger)                       # a finger we never saw lift
+        if self.touch_ui and not 0 <= lx < 640:
+            name = self.touch_button_at(lx, ly)
+            if name and name not in self.held:
+                self.touches[finger] = name
+                self.button(name, True)
+            return
+        name = self.touch_page(finger, lx, ly)
+        if name:
+            self.touches[finger] = name
+
+    def touch_move(self, finger, px, py):
+        """A finger sliding across the on-screen buttons moves from one to the next, as a thumb does on a d-pad."""
+        old = self.touches.get(finger)
+        if old is None or not self.touch_ui or old not in self.TOUCH_SLIDE:
+            return
+        lx, ly = (px - self.ox) / self.u, (py - self.oy) / self.u
+        name = self.touch_button_at(lx, ly) if not 0 <= lx < 640 else None
+        if name in self.TOUCH_SLIDE and name != old and name not in self.held:
+            self.button(old, False)
+            self.touches[finger] = name
+            self.button(name, True)
+
+    TOUCH_SLIDE = ("up", "down", "left", "right")
+
+    def touch_up(self, finger):
+        name = self.touches.pop(finger, None)
+        if name:
+            self.button(name, False)
+
+    @staticmethod
+    def _row_at(ly, y0, pitch, count):
+        """Which of `count` rows, `pitch` apart from y0, a height falls in; None when in none."""
+        n = int((ly - y0) // pitch) if ly >= y0 else -1
+        return n if 0 <= n < count else None
+
+    def touch_list(self, items, idx, ly, rows=12):
+        """A tap in a list drawn like the picker's: returns the row tapped, or None."""
+        top = max(0, min(idx - rows // 2, len(items) - rows))
+        n = self._row_at(ly, 66, 20, min(rows, len(items) - top))
+        return None if n is None else top + n
+
+    def touch_page(self, finger, lx, ly):
+        """A touch on the page itself. Returns the name of a button to release when the finger lifts, if any."""
+        e = self.eng
+        inside = lambda x, y, w, h: x <= lx < x + w and y <= ly < y + h     # noqa: E731
+        if self.recording or self.live:
+            return self.tap_button("A")
+        if self.confirm:
+            return self.tap_button("A" if inside(150, 130, 340, 90) else "B")
+        if self.namer:
+            c, r = int((lx - 125) // 39), int((ly - 144) // 33)
+            if lx >= 125 and ly >= 144 and 0 <= r < len(self.NAME_ROWS) and 0 <= c < len(self.NAME_ROWS[r]):
+                self.namer["x"], self.namer["y"] = c, r
+                self.tap_button("A")
+            return None
+        if self.browser or self.picker:
+            if not inside(60, 34, 520, 296):
+                return self.tap_button("B")
+            box = self.browser or self.picker
+            n = self.touch_list(box["items"], box["idx"], ly)
+            if n is not None:
+                if n == box["idx"]:
+                    self.tap_button("A")            # a second tap on the chosen row takes it
+                else:
+                    box["idx"] = n
+            return None
+        if self.knobs:
+            return None                             # the knob list is worked with the buttons
+        if ly < 29:                                 # the bar along the top
+            if lx < 6 + 46 * len(PAGES):
+                self.page = min(len(PAGES) - 1, int(max(0, lx - 6) // 46))
+            elif 286 <= lx < 286 + 17 * NPAT:
+                if e.playing and e.song_on and e.song:
+                    self.say("SONG MODE IS ON: PATTERNS FOLLOW THE CHAIN", 2.5)
+                else:
+                    e.select_pattern(int((lx - 286) // 17))
+            elif lx >= 500:
+                self.tap_button("start")
+            return None
+        page = PAGES[self.page]
+        first = self.base()
+        if page == "PLAY":
+            c, r = int((lx - 8) // 75), int((ly - 34) // 75)
+            if lx >= 8 and ly >= 34 and c < 4 and r < 4:
+                i = first + (3 - r) * 4 + c
+                name = "touch%s" % finger           # a button of its own, so letting go ends a held or repeating pad
+                self.sel = i
+                self.hit(i, name)
+                return name
+        elif page == "BEAT":
+            r = self._row_at(ly, 46, 17.8, BANK)
+            if r is None:
+                return None
+            pat = e.patterns[e.cur_pat]
+            self.flush_bake()
+            self.sel = first + r
+            self.follow_after = time.time() + self.FOLLOW_HOLD
+            if lx < 94:
+                self.beat_name = True               # the pad's name: its row, with the sound shown
+            elif lx >= 96:
+                st = (self.cur_step // 16) * 16 + int((lx - 96) // 33.5)
+                if st < pat["length"]:
+                    self.beat_name = False
+                    self.cur_step = st
+                    self.tap_button("A")
+        elif page == "SONG":
+            ys = {"SONG MODE": 36, "CHAIN": 62, "COPY PATTERN": 232, "CLEAR PATTERN": 254, "LENGTH": 276}
+            if 92 <= ly < 92 + 4 * 35 and lx >= 20:
+                i = int((ly - 92) // 35) * 16 + int((lx - 20) // 37.6)
+                if i < min(SONG_SLOTS, len(e.song) + 1) and int((lx - 20) // 37.6) < 16:
+                    was = (self.SONG_ROWS[self.song_row], self.song_cur)
+                    self.song_row, self.song_cur = self.SONG_ROWS.index("CHAIN"), i
+                    if was == ("CHAIN", i) or i == len(e.song):
+                        self.tap_button("A")        # the slot again: its next pattern; the + adds one
+                return None
+            for i, name in enumerate(self.SONG_ROWS):
+                if ys[name] <= ly < ys[name] + 22:
+                    if i == self.song_row:
+                        self.tap_button("A")
+                    self.song_row = i
+        elif page == "SOUND":
+            if ly < 146:
+                if self.sound_row == 0:
+                    self.tap_button("A")
+                self.sound_row = 0
+                return None
+            rows = self.SOUND_ROWS[1:]
+            top = max(0, min(self.sound_row - 1 - 4, len(rows) - 9))
+            n = self._row_at(ly, 146, 20.5, 9)
+            if n is not None:
+                if top + n + 1 == self.sound_row:
+                    self.touch_value(lx, 350, 264)
+                self.sound_row = top + n + 1
+        elif page == "FX":
+            if lx < 330:
+                for i, name in enumerate(self.FX_ROWS):
+                    y = 36 + i * 26 + (8 if name in self.STICK_ROWS else 0)
+                    if y <= ly < y + 26:
+                        if i == self.fx_row:
+                            self.touch_value(lx, 8, 318)
+                        self.fx_row = i
+        elif page == "PROJ":
+            if lx < 410:
+                shown = 13
+                top = max(0, min(self.proj_row - shown // 2, len(self.PROJ_ROWS) - shown))
+                n = self._row_at(ly, 34, 22.6, min(shown, len(self.PROJ_ROWS) - top))
+                if n is not None:
+                    if top + n == self.proj_row:
+                        self.touch_value(lx, 8, 398)
+                    self.proj_row = top + n
+        return None
+
+    def touch_value(self, lx, x, w):
+        """A tap on the row that is already chosen: its left third turns the value down, its right third up,
+        and the middle is A."""
+        third = (lx - x) / float(w)
+        self.tap_button("left" if third < 1 / 3.0 else ("right" if third > 2 / 3.0 else "A"))
 
     def joy_map(self):
         if not hasattr(self, "_joy_map"):
@@ -1722,8 +1975,10 @@ class App:
             try:
                 os.makedirs(SHARED, exist_ok=True)
             except OSError:
-                pass                        # not allowed yet: opening it asks for the permission
-            r.append(("POCKETPADS FOLDER", SHARED))
+                pass
+            r.append(("MUSIC / POCKETPADS", SHARED))
+            if os.path.isdir(SHARED_OLD):
+                r.append(("POCKETPADS FOLDER", SHARED_OLD))
         if GB_DIR:
             for label, sub in (("GRAINBRICK RECORDINGS", "recordings"), ("GRAINBRICK SAMPLES", "samples")):
                 d = os.path.join(GB_DIR, sub)
@@ -1732,18 +1987,20 @@ class App:
         return r
 
     def ask_files(self):
-        """Android: the shared folder cannot be read until the app is allowed "all files access". Open that
-        switch in the system settings; the folder is there the next time it is opened."""
-        self.say("TURN ON 'ALLOW ACCESS TO ALL FILES' FOR POCKETPADS, THEN COME BACK", 6)
+        """Android: files other apps put in the shared folders are hidden until the app may read audio files.
+        Ask once per visit; returns True when it is already allowed."""
         try:
+            from android.permissions import check_permission, request_permissions
             from jnius import autoclass
-            act = autoclass("org.kivy.android.PythonActivity").mActivity
-            intent = autoclass("android.content.Intent")(
-                autoclass("android.provider.Settings").ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                autoclass("android.net.Uri").parse("package:" + act.getPackageName()))
-            act.startActivity(intent)
-        except Exception as e:              # no such screen on this Android: it has to be done by hand
-            self.logline("file access screen: %r" % e)
+            new = autoclass("android.os.Build$VERSION").SDK_INT >= 33
+            perm = "android.permission.READ_MEDIA_AUDIO" if new else "android.permission.READ_EXTERNAL_STORAGE"
+            if check_permission(perm):
+                return True
+            request_permissions([perm])
+            self.say("ALLOW MUSIC AND AUDIO, THEN OPEN THE FOLDER AGAIN", 6)
+        except Exception as e:              # not Android after all, or one without these
+            self.logline("file access: %r" % e)
+        return False
 
     def root_of(self, path):
         ap = os.path.abspath(path)
@@ -1804,12 +2061,12 @@ class App:
         if br["dir"] is None:
             items = [("root", label) for label, _ in self.roots()]
         else:
+            if SHARED and os.path.abspath(br["dir"]).startswith((SHARED, SHARED_OLD)):
+                self.ask_files()
             try:
                 names = sorted(os.listdir(br["dir"]), key=str.lower)
             except OSError:
                 names = []
-                if SHARED and os.path.abspath(br["dir"]).startswith(SHARED):
-                    self.ask_files()
             dirs = [n for n in names if not n.startswith(".") and os.path.isdir(os.path.join(br["dir"], n))]
             wavs = [n for n in names if not n.startswith(".") and n.lower().endswith((".wav",) + CONVERT_EXTS)]
             items = [("dir", n) for n in dirs] + [("wav", n) for n in wavs]
@@ -2190,6 +2447,8 @@ class App:
         if lv > 0.01:
             self.box(580, 11, 52 * lv, 8, RED if lv > 0.95 else TEAL, None, 1)
 
+        if self.touch_ui:
+            self.draw_touch()
         self.area(0, 29, 640, 301)
         getattr(self, "draw_" + PAGES[self.page].lower())()
         self.area(0, 0, 0, 0)                           # on top: lists, dialogs, messages (not clipped)
@@ -2908,6 +3167,11 @@ class App:
                 left = next_frame - time.time()
                 if left <= 0:
                     break
+                if self.touch_ui or self.touches:
+                    # Fingers are in use: look for them every few milliseconds, not once a frame, so a tapped pad plays at once.
+                    for ev in pygame.event.get((pygame.FINGERDOWN, pygame.FINGERUP, pygame.FINGERMOTION)):
+                        self.handle_event(ev)
+                    left = min(left, 0.004)
                 if arrived is None:
                     time.sleep(left)
                 elif arrived.wait(left):

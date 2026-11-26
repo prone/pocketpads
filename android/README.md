@@ -22,3 +22,15 @@ adb install -r bin/pocketpads-*-debug.apk
 ```
 
 `recipes/pygame` swaps python-for-android's pygame 2.1.0, which no longer builds, for pygame-ce.
+
+## Touch
+
+Every control works by touch. On a device with no buttons of its own, the first touch brings up on-screen buttons at the sides of the screen (d-pad, A B X Y, L1 L2 R1 R2, SELECT, START); they do exactly what physical buttons do, and can be held together. Pressing a physical button takes them away again. With or without them, pads, page tabs, pattern letters, steps, list rows, the name keyboard and dialogs answer a finger directly: a tap chooses a row, a second tap on it is A (its left and right thirds turn a value down and up). Android's back gesture is B.
+
+## Your own samples
+
+Put WAV, MP3 or other audio files in `Music/PocketPads` on the device's storage (the app makes the folder). The first time you open it in the sound browser, Android asks to allow "music and audio". The app asks for nothing wider: no "all files access", and no location on Android 12 and up.
+
+## A release for the Play Store
+
+`./build.sh release` makes a signed bundle, `bin/pocketpads-<version>-arm64-v8a-release.aab`. It reads the signing key's settings from `~/.config/pocketpads/signing.env` (or the file named in `PP_SIGNING`): four lines, `P4A_RELEASE_KEYSTORE`, `P4A_RELEASE_KEYALIAS`, `P4A_RELEASE_KEYSTORE_PASSWD` and `P4A_RELEASE_KEYALIAS_PASSWD`. Make a key with `keytool -genkeypair -keystore upload-key.jks -alias pocketpads-upload -keyalg RSA -keysize 4096 -validity 10000`. Keep the key and its password out of the repository. Still to do before a Play Store upload: target Android 16 (`android.api`), and raise `android.numeric_version` for every upload.
