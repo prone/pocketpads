@@ -253,10 +253,27 @@ footer { max-width: 72rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   <p>It needs Android 7 or newer on a 64-bit ARM device, which covers most phones and handhelds made since about 2017. It has been tested on one device, a Retroid Pocket 4 Pro, so expect rough edges and <a href="https://github.com/prone/pocketpads/issues">report what you find</a>. The app cannot use the internet and collects nothing: see the <a href="privacy.html">privacy policy</a>.</p>
 </section>
 
+<section id="windows">
+  <h2>Try it on Windows</h2>
+  <p>There is an experimental Windows version too. It opens in a window with a layout made for touch, so every pad, knob and step can be clicked or dragged with the mouse. Sound, MIDI controllers, recording from the microphone and MP3 files are all in it.</p>
+  <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads/releases/download/v0.5/PocketPads-0.5-windows.zip">Download for Windows (29 MB)</a></p>
+  <ol>
+    <li>Download the zip file and extract all of it to a folder.</li>
+    <li>Open <code>PocketPads.exe</code> in that folder. Windows may say it protected your PC, because the app is not signed: choose More info, then Run anyway.</li>
+    <li>Your projects and sounds are kept in <code>Music\PocketPads</code>.</li>
+  </ol>
+  <p>Be warned that this one is the least tried of all. It is built and tested automatically on a Windows machine, where its tests pass and it starts, but nobody has yet played it on a real PC. Please <a href="https://github.com/prone/pocketpads/issues">report what you find</a>.</p>
+</section>
+
+<section id="apple">
+  <h2>iPad and Mac</h2>
+  <p>PocketPads also runs on the iPad, with the same touch layout, and on the Mac in a window. There is no download for either yet: for now you build them yourself with Xcode or a script, following the notes for the <a href="https://github.com/prone/pocketpads/tree/main/ios">iPad</a> and the <a href="https://github.com/prone/pocketpads/tree/main/desktop">Mac</a>. Each has been tried on one device.</p>
+</section>
+
 <section id="status">
   <h2>Where it stands</h2>
   <div class="status">
-    <p>This is an early version, 0.5, tested on one TrimUI Smart Pro running KNULLI Scarab. Everything on this page is built and working. MIDI has been tried with one USB controller's pads and with two M-Vave pad controllers over Bluetooth.</p>
+    <p>This is an early version, 0.5, made for and tested on one TrimUI Smart Pro running KNULLI Scarab. The Android, Windows, iPad and Mac versions are newer and less tried. Everything on this page is built and working. MIDI has been tried with one USB controller's pads and with two M-Vave pad controllers over Bluetooth.</p>
     <p>PocketPads is open source under the MIT licence. It is written in Python, with pygame for the screen and buttons and NumPy for the audio.</p>
     <p class="btns"><a class="btn" href="https://github.com/prone/pocketpads">View project on GitHub</a> <a class="btn alt" href="guide.html">Read the full guide</a></p>
     <p style="margin:1.1rem 0 0">Install steps are in the <a href="guide.html#m-install">guide</a> and the <a href="https://github.com/prone/pocketpads#readme">README</a>.</p>
