@@ -1606,7 +1606,15 @@ class App:
         try:
             progress(0.0)
             audio = e.render_offline(progress=progress)
-            folder = os.path.join(SAMPLES, "exports")
+            folder, where = os.path.join(SAMPLES, "exports"), "samples/exports/"
+            if SHARED:
+                # Android: the app's own storage cannot be reached from outside, so an export goes to the
+                # shared music folder, where a file manager or a computer finds it.
+                try:
+                    os.makedirs(os.path.join(SHARED, "exports"), exist_ok=True)
+                    folder, where = os.path.join(SHARED, "exports"), "Music/PocketPads/exports"
+                except OSError:
+                    pass
             os.makedirs(folder, exist_ok=True)
             kind = "SONG" if (e.song_on and e.song) else "PATTERN %s" % PAT_NAMES[e.cur_pat]
             path = self.unused_path(folder, "P%02d %s %s" % (self.loaded, kind, time.strftime("%Y-%m-%d %H-%M")))
@@ -1620,7 +1628,7 @@ class App:
                 if ev.type in (pygame.KEYUP, pygame.JOYBUTTONUP, pygame.CONTROLLERBUTTONUP, pygame.QUIT):
                     self.handle_event(ev)
         self.logline("export: %s, %.1f s" % (path, len(audio) / SR))
-        self.say("SAVED %d:%02d TO samples/exports/" % (len(audio) / SR // 60, len(audio) / SR % 60), 4)
+        self.say("SAVED %d:%02d TO %s" % (len(audio) / SR // 60, len(audio) / SR % 60, where), 4)
 
     def start_resample(self):
         self.eng.capture_start()
@@ -2888,7 +2896,7 @@ class App:
         self.box(418, 38, 214, 275, PANEL, LINE, 6)
         self.text("PocketPads %s" % VERSION, 622, 326, "s", DIM, "r")
         info = ["GETTING SOUNDS IN", "", "RECORD MIC is at the top of", "this list.", "",
-                "To load a file: SOUND page,", "SAMPLE row, press A.", "Put WAV or MP3 files in", "ports/pocketpads/samples/", "",
+                "To load a file: SOUND page,", "SAMPLE row, press A.", "Put WAV or MP3 files in", "Music/PocketPads" if ANDROID else "ports/pocketpads/samples/", "",
                 "audio: %s" % ("off" if e.dev is None else "ok"),
                 "dropouts: %d" % e.underruns, "peak load: %.1f ms" % e.max_render_ms]
         for i, s in enumerate(info):
