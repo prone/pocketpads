@@ -81,6 +81,8 @@ ANDROID_BUTTONS = {"0": "A", "1": "B", "2": "X", "3": "Y", "4": "select", "6": "
                    "11": "up", "12": "down", "13": "left", "14": "right", "15": "l2", "16": "r2"}
 # Joystick axes as SDL gives them on Android: left stick, right stick, then the two triggers.
 ANDROID_AXES = {0: "lx", 1: "ly", 2: "rx", 3: "ry", 4: "l2", 5: "r2"}
+# Android: a folder on the device's shared storage that sounds can be dropped into from a computer or file manager.
+SHARED = os.path.join(os.environ.get("EXTERNAL_STORAGE", "/sdcard"), "PocketPads") if ANDROID else None
 
 _MIXED = {}
 
@@ -134,6 +136,7 @@ class App:
         self.eng = Engine()
         self.page, self.sel, self.cur_step = 0, 0, 0
         self.follow_after = 0.0         # the beat page follows the playing step again from this time on
+        self.repaint_until = time.time() + 4.0
         self.sound_row, self.proj_row, self.fx_row = 0, 0, 0
         self.song_row, self.song_cur, self.copy_to = 0, 0, 1
         self.paint = None      # BEAT page: value being painted while A is held
@@ -279,7 +282,15 @@ class App:
         pads = [j for j in self.joysticks if j.get_numbuttons() > 0]
         self.joy_id = pads[0].get_instance_id() if pads else -1
 
+    # The system showed our window again, or gave it a new surface: what we drew before may be gone.
+    REPAINT = tuple(getattr(pygame, n) for n in ("WINDOWEXPOSED", "WINDOWSHOWN", "WINDOWRESTORED", "WINDOWFOCUSGAINED",
+                                                 "WINDOWSIZECHANGED", "VIDEOEXPOSE", "APP_DIDENTERFOREGROUND")
+                    if hasattr(pygame, n))
+
     def handle_event(self, e):
+        if e.type in self.REPAINT:
+            self.frame = []                         # the next frame is drawn in full, not just what changed
+            self.repaint_until = time.time() + 2.0
         if e.type == pygame.QUIT:
             self.running = False
         elif e.type == pygame.KEYDOWN:
@@ -1646,12 +1657,32 @@ class App:
     # ------------------------------------------------------------ sample browser
     def roots(self):
         r = [("MY SAMPLES", SAMPLES)]
+        if SHARED:
+            try:
+                os.makedirs(SHARED, exist_ok=True)
+            except OSError:
+                pass                        # not allowed yet: opening it asks for the permission
+            r.append(("POCKETPADS FOLDER", SHARED))
         if GB_DIR:
             for label, sub in (("GRAINBRICK RECORDINGS", "recordings"), ("GRAINBRICK SAMPLES", "samples")):
                 d = os.path.join(GB_DIR, sub)
                 if os.path.isdir(d):
                     r.append((label, d))
         return r
+
+    def ask_files(self):
+        """Android: the shared folder cannot be read until the app is allowed "all files access". Open that
+        switch in the system settings; the folder is there the next time it is opened."""
+        self.say("TURN ON 'ALLOW ACCESS TO ALL FILES' FOR POCKETPADS, THEN COME BACK", 6)
+        try:
+            from jnius import autoclass
+            act = autoclass("org.kivy.android.PythonActivity").mActivity
+            intent = autoclass("android.content.Intent")(
+                autoclass("android.provider.Settings").ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                autoclass("android.net.Uri").parse("package:" + act.getPackageName()))
+            act.startActivity(intent)
+        except Exception as e:              # no such screen on this Android: it has to be done by hand
+            self.logline("file access screen: %r" % e)
 
     def root_of(self, path):
         ap = os.path.abspath(path)
@@ -1716,6 +1747,8 @@ class App:
                 names = sorted(os.listdir(br["dir"]), key=str.lower)
             except OSError:
                 names = []
+                if SHARED and os.path.abspath(br["dir"]).startswith(SHARED):
+                    self.ask_files()
             dirs = [n for n in names if not n.startswith(".") and os.path.isdir(os.path.join(br["dir"], n))]
             wavs = [n for n in names if not n.startswith(".") and n.lower().endswith((".wav",) + CONVERT_EXTS)]
             items = [("dir", n) for n in dirs] + [("wav", n) for n in wavs]
@@ -2759,6 +2792,7 @@ class App:
 
     def loop(self):
         clock = pygame.time.Clock()
+        self.repaint_until = time.time() + 4.0      # counted from here: loading may have taken a while
         while self.running:
             for ev in pygame.event.get():
                 self.handle_event(ev)
@@ -2774,6 +2808,10 @@ class App:
             if self.resampling and time.time() - self.resampling[0] > 60:
                 self.finish_resample()
             self.run_script()
+            if ANDROID and time.time() < self.repaint_until:
+                # Android swaps its launch picture for our surface without always saying so, and a frame
+                # drawn before that is lost: for the first moments, and after coming back, draw in full.
+                self.frame = []
             self.draw()
             if self.previewing and time.time() >= self.preview_end:
                 self.previewing = None

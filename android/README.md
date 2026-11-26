@@ -2,7 +2,9 @@
 
 PocketPads packaged as an Android app with [python-for-android](https://github.com/kivy/python-for-android) through Buildozer. Tried on one device, a Retroid Pocket 4 Pro (Android 13): the screens, the buttons, both sticks, the built-in kit and sound work.
 
-Not there yet: MIDI and Bluetooth MIDI, the microphone, loading your own samples, and MP3 conversion.
+Your own sounds go in a `PocketPads` folder on the device's shared storage (WAV files; the app asks for "all files access" the first time the folder is opened). That part is new and not yet confirmed on a device.
+
+Not there yet: MIDI and Bluetooth MIDI, the microphone, and MP3 conversion.
 
 ## Build
 
