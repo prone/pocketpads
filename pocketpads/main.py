@@ -172,7 +172,13 @@ class App:
         os.makedirs(SAMPLES, exist_ok=True)
         self.kit_paths = kit.ensure_kit(os.path.join(SAMPLES, "kit"))
         self.midi = midi.MidiPort(self.logline)
-        self.midi_ccs = []              # controller numbers of the knobs, in the order they were first turned
+        self.knob_ccs = []              # controller number of each knob: knob 1 first (see tick_midi)
+        self.knob_fn = list(self.KNOB_DEFAULT)      # what each knob changes, by name
+        self.knobs = None               # the MIDI KNOBS list while it is open: {"row": n}
+        self.midi_last = ""             # the last message a controller sent, shown in that list
+        self.midi_block = None          # which sixteen notes the controller's pads last sent (its own pad bank)
+        self.midi_logged = set()        # messages already written to the log (each kind once)
+        self.midi_rep = {}              # note -> pad, for pads repeating while a controller pad is held
         self.midi_seen = 0              # how many MIDI devices were connected last time we looked
         self.midi_held = {}             # note -> pad, for HOLD pads played from a controller
         try:
@@ -181,13 +187,19 @@ class App:
             self.slot = min(SLOTS, max(1, int(state.get("slot", 1))))
             self.midi.out_channel = int(state.get("midi_out", 0)) % 17
             self.in_beat = bool(state.get("in_beat", False))
+            self.knob_ccs = [int(c) % 128 for c in state.get("knob_ccs", [])][:len(self.KNOB_DEFAULT)]
+            for k, name in enumerate(list(state.get("knob_fn", []))[:len(self.knob_fn)]):
+                if name in self.TARGETS:
+                    self.knob_fn[k] = name
             for axis, name in dict(state.get("sticks") or {}).items():
                 if axis in self.stick_fx and name in self.STICK_FX:
                     self.stick_fx[axis] = name
         except (OSError, ValueError, TypeError, AttributeError):
             pass
+        self.ble = midi.BleMidi(self.midi.events, self.logline)     # Bluetooth controllers feed the same queue
         if not os.environ.get("PP_NOMIDI"):
             self.midi.start()
+            self.ble.start()
         self.eng.on_note = self.midi.note
         self.loaded = self.slot
         if not (os.path.exists(self.slot_path()) and self.load_project(quiet=True)):
@@ -346,7 +358,7 @@ class App:
 
     def modal(self):
         """True while a dialog, list or recording owns the buttons."""
-        return bool(self.confirm or self.browser or self.picker or self.recording or self.live or self.namer)
+        return bool(self.confirm or self.browser or self.picker or self.recording or self.live or self.namer or self.knobs)
 
     def tick_repeat(self):
         now = time.time()
@@ -478,12 +490,18 @@ class App:
             self.flush_bake()
             self.eng.save(self.slot_path(slot))
             self.loaded = slot
-            with open(STATE, "w") as f:
-                json.dump({"slot": slot, "midi_out": self.midi.out_channel, "sticks": self.stick_fx, "in_beat": self.in_beat}, f)
+            self.save_state(slot)
             if not quiet:
                 self.say("SAVED %s" % self.slot_label(slot))
         except OSError as e:
             self.say("SAVE FAILED: %s" % e, 4)
+
+    def save_state(self, slot=None):
+        """Settings that belong to the handheld, not to one project."""
+        with open(STATE, "w") as f:
+            json.dump({"slot": self.loaded if slot is None else slot, "midi_out": self.midi.out_channel,
+                       "sticks": self.stick_fx, "in_beat": self.in_beat,
+                       "knob_ccs": self.knob_ccs, "knob_fn": self.knob_fn}, f)
 
     def load_project(self, quiet=False):
         """Load the slot the PROJECT row shows. Returns True on success."""
@@ -656,6 +674,8 @@ class App:
             return self.press_browser(b)
         if self.picker:
             return self.press_picker(b)
+        if self.knobs:
+            return self.press_knobs(b)
         # global controls
         if b == "start":
             if sel:
@@ -714,8 +734,8 @@ class App:
             self.say("REPEAT RATE %s" % RATES[e.repeat_div][0], 1.0)
         elif b in DIRS:
             r, c = divmod(self.sel % BANK, 4)
-            if b == "up": r = (r - 1) % 4
-            if b == "down": r = (r + 1) % 4
+            if b == "up": r = (r + 1) % 4       # pad 1 is bottom left, so up the screen is up the numbers
+            if b == "down": r = (r - 1) % 4
             if b == "left": c = (c - 1) % 4
             if b == "right": c = (c + 1) % 4
             self.sel = self.base() + r * 4 + c
@@ -1342,7 +1362,7 @@ class App:
                 axis = self.STICK_ROWS[row]
                 self.stick_fx[axis] = names[(names.index(self.stick_fx[axis]) + d) % len(names)]
 
-    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "SAVE", "SAVE A COPY", "NAME", "OPEN", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES"]
+    PROJ_ROWS = (["RECORD MIC", "RESAMPLE", "EXPORT AUDIO", "SAVE", "SAVE A COPY", "NAME", "OPEN", "NEW", "TEMPO", "SWING", "MASTER", "MIDI OUT", "MIDI DEVICES", "BLUETOOTH MIDI", "MIDI KNOBS"]
                  + (["IMPORT CHOPS", "GRAINBRICK"] if GB_DIR else []) + ["QUIT"])
 
     def press_proj(self, b, sel):
@@ -1374,6 +1394,14 @@ class App:
                 self.start_naming()
             elif row == "NEW":
                 self.ask_new_project()
+            elif row == "MIDI KNOBS":
+                self.knobs = {"row": 0}
+            elif row == "BLUETOOTH MIDI":
+                if self.ble.running or self.ble.start():
+                    self.ble.search()
+                    self.say("SEARCHING: SWITCH THE CONTROLLER'S BLUETOOTH ON", 3)
+                else:
+                    self.say("BLUETOOTH IS OFF IN THE SYSTEM MENU", 3)
             elif row == "RECORD MIC":
                 self.confirm = ("RECORD %d SECONDS? REPLACES PADS %d-%d" % (REC_SECONDS, self.base() + 1, self.base() + BANK),
                                 self.start_record)
@@ -2039,6 +2067,8 @@ class App:
                     self.text("PLAYING", 564, 76 + n * 20, "s", ORANGE, "r")
             self.text(pk.get("hint") or "A import to pads %d-%d    X play / stop    B cancel" % (self.base() + 1, self.base() + BANK),
                       320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+        if self.knobs:
+            self.draw_knobs()
         if self.live:
             lv = self.live
             pos = min(1.0, max(0.0, self.live_pos()))
@@ -2147,7 +2177,7 @@ class App:
         first = self.base()
         for i, p in enumerate(self.bank_pads(), first):
             r, c = divmod(i - first, 4)
-            x, y = 8 + c * 75, 34 + r * 75
+            x, y = 8 + c * 75, 34 + (3 - r) * 75        # pad 1 bottom left, pad 16 top right, as on pad controllers
             self.area(x, y, 71, 71)                     # an area per pad: a hit redraws one pad, not sixteen
             glow = round(min(1.0, max(0.0, 1.0 - (now - e.pad_flash[i]) / 0.18)) * 3) / 3.0   # four steps; safe if the clock jumps
             base = PANEL if p.buf is not None else DARK
@@ -2382,9 +2412,11 @@ class App:
                 "SWING": "%d%%  (50 straight, 66 triplet)" % round(e.swing),
                 "MIDI OUT": ("channel %d  -  pads send notes, plus clock" % self.midi.out_channel) if self.midi.out_channel
                             else "OFF",
-                "MIDI DEVICES": (self.clip(", ".join(self.midi.devices), 40) or "none found  -  plug one in") if self.midi.running
+                "MIDI DEVICES": (self.clip(", ".join(self.midi_names()), 40) or "none found  -  plug one in") if self.midi.running
                                 else self.midi.error or "off",
                 "MASTER": "%d" % round(e.master * 100), "QUIT": "save and exit",
+                "MIDI KNOBS": "A to choose what each knob changes",
+                "BLUETOOTH MIDI": self.clip(self.ble.status, 40) if self.ble.running else "A to search for controllers",
                 "RECORD MIC": "%d s from the mic, chopped onto pads %d-%d" % (REC_SECONDS, self.base() + 1, self.base() + BANK),
                 "RESAMPLE": "record what you hear onto pad %d" % (self.sel + 1),
                 "EXPORT AUDIO": "save %s as a WAV file" % ("the song" if (e.song_on and e.song)
@@ -2475,61 +2507,204 @@ class App:
                 self.running = False
 
     # ------------------------------------------------------------ MIDI
-    # Knobs, in the order their controller numbers sort: (pad attribute, lowest value, highest value, re-render?)
-    KNOBS = [("vol", 0.0, 1.5, False), ("pitch", -24, 24, True), ("filt", -100, 100, True), ("dsend", 0.0, 1.0, False),
-             ("rsend", 0.0, 1.0, False), ("start", 0.0, 0.98, True), ("end", 0.02, 1.0, True), ("fout", 0, 2000, True)]
+    # What a knob can change: name -> (pad or engine, attribute, lowest value, highest value, re-render the pad?)
+    TARGETS = {"VOLUME": ("pad", "vol", 0.0, 1.5, False), "PITCH": ("pad", "pitch", -24, 24, True),
+               "FILTER": ("pad", "filt", -100, 100, True), "DELAY": ("pad", "dsend", 0.0, 1.0, False),
+               "REVERB": ("pad", "rsend", 0.0, 1.0, False), "START": ("pad", "start", 0.0, 0.98, True),
+               "END": ("pad", "end", 0.02, 1.0, True), "FADE OUT": ("pad", "fout", 0, 2000, True),
+               "TEMPO": ("eng", "bpm", 60, 187, False), "MASTER": ("eng", "master", 0.0, 1.5, False),
+               "SWING": ("eng", "swing", 50, 75, False), "COMPRESSOR": ("eng", "comp", 0.0, 1.0, False),
+               "DELAY FEEDBACK": ("eng", "delay_fb", 0.0, 0.9, False), "REVERB SIZE": ("eng", "reverb_size", 0.0, 1.0, False),
+               "OFF": None}
+    # Knobs 1-8 shape the selected pad; a second set of eight (a controller's knob bank) shapes the whole mix.
+    KNOB_DEFAULT = ["VOLUME", "PITCH", "FILTER", "DELAY", "REVERB", "FADE OUT", "START", "END",
+                    "TEMPO", "MASTER", "SWING", "COMPRESSOR", "DELAY FEEDBACK", "REVERB SIZE", "OFF", "OFF"]
 
     # Controller numbers that are not knobs: bank select, mod wheel, data entry, channel volume, pedals
     # and the channel-mode messages (120-127, such as "all notes off", which many controllers send on stop).
     NOT_KNOBS = frozenset([0, 1, 6, 7, 32, 38] + list(range(64, 70)) + list(range(96, 102)) + list(range(120, 128)))
-    KNOB_NAMES = ["VOLUME", "PITCH", "FILTER", "DELAY", "REVERB", "START", "END", "FADE OUT"]
+
+    # The M-Vave SMC-PAD as it comes, read from a real unit over Bluetooth: knobs 1-8 send controllers 30-37
+    # (knob 1 is bottom left, 2 bottom right, and so on upward), and 38-45 after its KNOB BANK button. They send
+    # a position, 0-127. PAUSE sends the same as STOP. PAD BANK moves the pads from notes 36-51 to 52-67.
+    # Used only while a device with SMC in its name is connected.
+    SMC_KNOBS = list(range(30, 46))
+    SMC_BUTTONS = {25: "back", 26: "forward", 27: "play", 28: "stop", 29: "record"}
+    MMC = {1: "stop", 2: "play", 3: "play", 6: "record", 7: "record", 9: "pause"}
+
+    def midi_names(self):
+        """Every connected controller, USB and Bluetooth."""
+        return self.midi.devices + self.ble.devices
+
+    def smc(self):
+        """An SMC-PAD is connected (the full-size one: the Pocket has pads only)."""
+        return any("smc" in d.lower() and "pocket" not in d.lower() for d in self.midi_names())
+
+    def transport(self, what):
+        """A controller's transport button."""
+        e = self.eng
+        if what == "play" and not e.playing:
+            e.play()
+        elif what == "stop" and e.playing:
+            e.stop()
+        elif what == "pause":
+            e.toggle_play()
+        elif what == "record":
+            e.rec = not e.rec
+            self.say("RECORD ON: PLAY PADS WHILE RUNNING" if e.rec else "RECORD OFF")
+        elif what in ("back", "forward") and not self.modal():
+            if e.playing and e.song_on and e.song:
+                self.say("SONG MODE IS ON: PATTERNS FOLLOW THE CHAIN", 2.5)
+            else:
+                d = 1 if what == "forward" else -1
+                e.select_pattern(((e.pending_pat if e.pending_pat is not None else e.cur_pat) + d) % NPAT)
+
+    def turn_knob(self, cc, value):
+        """A knob is known by its controller number. One not seen before becomes the next knob in the list."""
+        e = self.eng
+        if cc not in self.knob_ccs:
+            if cc in self.NOT_KNOBS or len(self.knob_ccs) >= len(self.KNOB_DEFAULT):
+                return
+            self.knob_ccs.append(cc)
+        k = self.knob_ccs.index(cc)
+        if self.knobs:                              # the knob list is open: turning a knob finds its row
+            self.knobs["row"] = k
+            return
+        spec = self.TARGETS[self.knob_fn[k]]
+        if spec is None or self.modal():
+            return
+        where, attr, lo, hi, bake = spec
+        v = lo + (hi - lo) * min(127, max(0, value)) / 127.0
+        v = int(round(v)) if isinstance(lo, int) else round(v, 3)
+        if where == "eng":
+            setattr(e, attr, float(v))
+            self.say("KNOB %d: %s %s" % (k + 1, self.knob_fn[k], v if isinstance(lo, int) else round(v * 100)), 1.2)
+            return
+        p = e.pads[self.sel]
+        setattr(p, attr, v)
+        p.start, p.end = min(p.start, 0.98), max(p.end, min(1.0, p.start + 0.02))
+        self.say("KNOB %d: %s, PAD %d" % (k + 1, self.knob_fn[k], self.sel + 1), 1.2)
+        if bake and p.raw is not None:
+            if self.pending_bake and self.pending_bake[0] is not p:
+                self.flush_bake()
+            self.pending_bake = (p, time.time() + 0.15)     # wait until the knob stops turning
+
+    def knob_rows(self):
+        return min(len(self.KNOB_DEFAULT), max(8, len(self.knob_ccs)))
+
+    def press_knobs(self, b):
+        kn = self.knobs
+        n = self.knob_rows()
+        kn["row"] = min(kn["row"], n - 1)
+        if b == "up":
+            kn["row"] = (kn["row"] - 1) % n
+        elif b == "down":
+            kn["row"] = (kn["row"] + 1) % n
+        elif b in ("left", "right"):
+            names = list(self.TARGETS)
+            k = kn["row"]
+            self.knob_fn[k] = names[(names.index(self.knob_fn[k]) + (1 if b == "right" else -1)) % len(names)]
+        elif b == "X":
+            def reset():
+                self.knob_fn = list(self.KNOB_DEFAULT)
+                self.knob_ccs = list(self.SMC_KNOBS) if self.smc() else []
+            self.confirm = ("PUT ALL KNOBS BACK AS THEY CAME?", reset)
+        elif b in ("B", "A", "start"):
+            self.knobs = None
+            try:
+                self.save_state()
+            except OSError as e:
+                self.say("SAVE FAILED: %s" % e, 4)
+
+    def draw_knobs(self):
+        kn = self.knobs
+        n = self.knob_rows()
+        kn["row"] = min(kn["row"], n - 1)
+        self.box(60, 34, 520, 296, PANEL, ORANGE, 6, 2)
+        self.text("MIDI KNOBS", 74, 50, "m", ORANGE)
+        self.text(self.clip(", ".join(self.midi_names()), 34) or "no controller connected", 566, 50, "m", DIM, "r")
+        top = max(0, min(kn["row"] - 5, n - 10))
+        for i in range(top, min(n, top + 10)):
+            y = 64 + (i - top) * 20
+            on = i == kn["row"]
+            if on:
+                self.box(68, y, 504, 19, mix(PANEL, TEAL, 0.35), None, 3)
+            self.text("KNOB %d" % (i + 1), 78, y + 10, "m", ORANGE if on else DIM)
+            name = self.knob_fn[i]
+            spec = self.TARGETS[name]
+            self.text(name, 170, y + 10, "m", TEXT if spec else DIM)
+            if spec:
+                self.text("selected pad" if spec[0] == "pad" else "whole mix", 330, y + 10, "h", DIM)
+            self.text("CC %d" % self.knob_ccs[i] if i < len(self.knob_ccs) else "turn it to add it", 564, y + 10, "h", DIM, "r")
+        self.text("LAST RECEIVED:  %s" % (self.midi_last or "nothing yet"), 320, 280, "h", TEXT, "c")
+        self.text("left right change   turn a knob to find it   X all back to default   B done", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
 
     def tick_midi(self):
         """Feed the MIDI port what it needs for clock, and act on what controllers sent."""
         e, m = self.eng, self.midi
         m.bpm, m.playing = e.bpm * 1.5 ** e.fx_tempo, e.playing
         m.latency = (e.queue_blocks + 1) * BLOCK / SR
-        if len(m.devices) < self.midi_seen:         # a controller was unplugged: let go of whatever it held
+        names = self.midi_names()
+        if len(names) < self.midi_seen:         # a controller was unplugged: let go of whatever it held
             for pad in self.midi_held.values():
                 e.note_off(pad)
+            for pad in self.midi_rep.values():
+                e.release(pad)
             self.midi_held.clear()
-        self.midi_seen = len(m.devices)
+            self.midi_rep.clear()
+            self.midi_block = None
+        self.midi_seen = len(names)
+        smc = self.smc()
+        if smc and self.knob_ccs != self.SMC_KNOBS:     # an SMC-PAD: its two banks of knobs are knobs 1-16
+            self.knob_ccs = list(self.SMC_KNOBS)
         for ev in m.poll():
-            if ev[0] == "note":
+            kind = ev[0]
+            if kind != "off":
+                fmt = {"note": "NOTE %d", "cc": "CC %d = %d", "pc": "PROGRAM %d", "mmc": "MMC %d",
+                       "start": "START", "stop": "STOP"}[kind]
+                self.midi_last = fmt % tuple(ev[1:1 + fmt.count("%")])
+                if ev[:2] not in self.midi_logged and len(self.midi_logged) < 300:
+                    self.midi_logged.add(ev[:2])
+                    self.logline("midi in: %s" % self.midi_last)
+            if kind == "note":
                 # A controller plays the bank on screen: note 36 (C1) is the bank's first pad, and the sixteen
                 # pads repeat every sixteen notes, so a controller's own pads land on them wherever they start.
-                pad = self.base() + (ev[1] - midi.BASE_NOTE) % BANK
+                block, i = divmod(ev[1] - midi.BASE_NOTE, BANK)
+                if smc and self.midi_block not in (None, block) and not self.modal():
+                    # Its PAD BANK button moved its pads to another sixteen notes: its first bank (notes 36-51)
+                    # is our pads 1-16 and its second is 17-32, whatever bank was on screen before.
+                    self.flush_bake()
+                    self.sel = (block % NBANKS) * BANK + self.sel % BANK
+                    self.say("BANK %d: PADS %d-%d" % (self.sel // BANK + 1, self.base() + 1, self.base() + BANK), 1.5)
+                self.midi_block = block
+                pad = self.base() + i
                 if not self.modal():                # a dialog names its pads: do not move them under it
                     if pad != self.sel:
                         self.flush_bake()
                     self.sel = pad
+                if e.repeat_on:                     # note repeat: it keeps firing until the pad is let go
+                    e.hold(pad)
+                    self.midi_rep[ev[1]] = pad
+                    continue
                 # echo=False: a note that came in is not sent back out, or a device with "thru" would loop
                 e.trigger(pad, min(1.3, max(0.3, ev[2] / 100.0)), echo=False)
                 if e.pads[pad].mode == HOLD:
                     self.midi_held[ev[1]] = pad
-            elif ev[0] == "off" and ev[1] in self.midi_held:
-                e.note_off(self.midi_held.pop(ev[1]))
-            elif ev[0] == "cc" and ev[1] not in self.NOT_KNOBS and not self.modal():
-                # The first eight knobs turned, in the order they were first turned, are the eight settings.
-                if ev[1] not in self.midi_ccs:
-                    if len(self.midi_ccs) >= len(self.KNOBS):
-                        continue
-                    self.midi_ccs.append(ev[1])
-                k = self.midi_ccs.index(ev[1])
-                attr, lo, hi, bake = self.KNOBS[k]
-                p = e.pads[self.sel]
-                v = lo + (hi - lo) * min(127, max(0, ev[2])) / 127.0
-                setattr(p, attr, int(round(v)) if isinstance(lo, int) else round(v, 3))
-                p.start, p.end = min(p.start, 0.98), max(p.end, min(1.0, p.start + 0.02))
-                self.say("KNOB %d: %s, PAD %d" % (k + 1, self.KNOB_NAMES[k], self.sel + 1), 1.2)
-                if bake and p.raw is not None:
-                    if self.pending_bake and self.pending_bake[0] is not p:
-                        self.flush_bake()
-                    self.pending_bake = (p, time.time() + 0.15)     # wait until the knob stops turning
-            elif ev[0] == "start" and not e.playing:
-                e.play()
-            elif ev[0] == "stop" and e.playing:
-                e.stop()
+            elif kind == "off":
+                if ev[1] in self.midi_held:
+                    e.note_off(self.midi_held.pop(ev[1]))
+                if ev[1] in self.midi_rep:
+                    e.release(self.midi_rep.pop(ev[1]))
+            elif kind == "cc":
+                if smc and ev[1] in self.SMC_BUTTONS:
+                    if ev[2] > 0:                   # the press; letting go sends 0
+                        self.transport(self.SMC_BUTTONS[ev[1]])
+                else:
+                    self.turn_knob(ev[1], ev[2])
+            elif kind in ("start", "stop"):
+                self.transport("play" if kind == "start" else "stop")
+            elif kind == "mmc" and ev[1] in self.MMC:
+                self.transport(self.MMC[ev[1]])
 
     # ------------------------------------------------------------ main loop
     def run(self):
@@ -2563,6 +2738,7 @@ class App:
             self.logline("render errors: %d, first:\n%s" % (self.eng.render_errors, self.eng.last_error))
         self.logline("exit: dropouts=%d peak_render=%.1fms" % (self.eng.underruns, self.eng.max_render_ms))
         self.midi.stop()
+        self.ble.stop()
         self.eng.shutdown()
         pygame.quit()
         return self.exit_code

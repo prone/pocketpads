@@ -15,7 +15,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - Lo-fi per pad (bit crush, sample-rate reduction) and a master compressor
 - Analog sticks play performance effects (filter, tempo bend, fade, echo, reverb, stutter, crush, pan, tape stop), with the effect for each direction chosen on the FX page
 - Export the song or pattern as a WAV file
-- MIDI through the ALSA sequencer: a controller's pads and keys play the bank of pads on screen and its knobs turn settings; pads send notes, clock, start and stop (new; tried with one USB controller, pads only)
+- MIDI through the ALSA sequencer: a controller's pads and keys play the bank of pads on screen, its knobs turn settings you choose (MIDI KNOBS on the PROJ page) and its transport buttons run the beat, with defaults for the M-Vave SMC-PAD; pads send notes, clock, start and stop (new; tried with one USB controller's pads and an M-Vave SMC-PAD over Bluetooth)
 - Per pad: volume, pitch and fine tune, one-knob filter, trim, fades, reverse, choke group, delay and reverb sends, and one-shot, hold or loop play modes
 - Note repeat, MPC-style swing (50 to 75%), and hold-to-apply stutter, tape stop and filter sweeps on the whole mix
 - Sampling: record ten seconds from the built-in microphone and have it chopped onto the pads
@@ -100,10 +100,10 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 
 ## Tests
 
-The tests cover the engine and need only NumPy:
+The tests cover the engine and need only NumPy, except `midi`, which runs the whole app without a screen and also needs pygame:
 
 ```
-for t in engine effects sampler robustness styles; do python pocketpads/tests/test_$t.py pocketpads; done
+for t in engine effects sampler robustness styles midi; do python pocketpads/tests/test_$t.py pocketpads; done
 ```
 
 Each prints a line ending in `OK` when it passes.
@@ -113,7 +113,7 @@ Each prints a line ending in `OK` when it passes.
 - Changing a pad setting re-renders that pad's audio; on samples longer than a few seconds this waits until you stop adjusting.
 - Converting a long MP3 pauses the screen until it finishes.
 - Stretch works on samples up to 30 seconds and pauses briefly while it renders (about 0.16 s per second of audio on the Smart Pro).
-- MIDI in has been tried with one USB controller, and only its pads; knobs, MIDI out and clock have not been tried with real gear. Bluetooth MIDI devices are not connected automatically.
+- MIDI in has been tried with one USB controller, and only its pads, and with an M-Vave SMC-PAD over Bluetooth (pads, knobs, transport and bank buttons); MIDI out and clock have not been tried with real gear. Bluetooth MIDI controllers connect by themselves (PocketPads reads them through BlueZ, which needs the system's `dbus` Python module), in only: notes and clock out go to USB devices.
 - An export is five minutes at most.
 - The MIDI clock is timed by the system clock, not the sound card, so gear synced to it can drift over a long song.
 

@@ -113,6 +113,24 @@ kbd.face { border-radius: 999px; background: var(--orange); color: #fff; box-sha
 .screen img { display: block; width: 100%; height: auto; border-radius: 0.35rem; background: var(--screen); }
 .screen figcaption { color: #cfc9bc; font-size: 0.86rem; padding: 0.7rem 0.2rem 0; line-height: 1.4; }
 
+/* ---------- controller diagrams ---------- */
+.ctl-intro { color: var(--ink-soft); max-width: 62ch; }
+.ctl-fig { max-width: 40rem; margin: 1rem 0 0; }
+.ctl-fig.ctl-small { max-width: 24rem; margin-bottom: 0.5rem; }
+.ctl { display: flex; flex-wrap: wrap; gap: 1rem 1.25rem; align-items: center; justify-content: center; background: var(--screen); color: #e4e5eb; border-radius: 0.35rem; padding: 1rem; }
+.ctl svg { display: block; height: auto; min-width: 0; }
+.ctl-knobs { flex: 1 1 11rem; max-width: 14rem; }
+.ctl-pads { flex: 1.5 1 15rem; max-width: 21rem; }
+.ctl .pad { fill: #1e2028; stroke: #484c5a; stroke-width: 1.5; }
+.ctl .knob { fill: #1e2028; stroke: var(--orange-bright); stroke-width: 3; }
+.ctl text { font-family: var(--body); fill: #e4e5eb; }
+.ctl .num { font-size: 24px; font-weight: 700; }
+.ctl .sub { font-size: 15px; fill: #b9bcc9; }
+.ctl .mid { text-anchor: middle; }
+.ctl-fig figcaption b { color: #fff; }
+.ctl-fig figcaption .row { color: #3ecdb6; }
+.ctl-fig figcaption kbd:not(.face) { background: #45444b; }
+
 /* ---------- the handheld's buttons ---------- */
 .buttons { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 2rem; margin-top: 1.5rem; border-top: 2px solid var(--ink); }
 .buttons div { padding: 1rem 0 0.4rem; }
@@ -490,20 +508,50 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
   </article>
 
   <article class="tut" id="t-midi">
-    <div class="tut-head"><div class="tut-num">13</div><div><h3>Use a MIDI controller</h3><p>Play the pads from a USB controller, turn its knobs, or drive a synth from the sequencer.</p></div></div>
+    <div class="tut-head"><div class="tut-num">13</div><div><h3>Use a MIDI controller</h3><p>Play the pads from a USB or Bluetooth controller, turn its knobs, or drive a synth from the sequencer.</p></div></div>
     <div class="tut-body solo">
       <ol class="steps">
         <li>Plug a USB MIDI controller into the handheld. PocketPads connects by itself, with nothing to set up.</li>
-        <li>Check the <span class="row">MIDI DEVICES</span> row at the bottom of the PROJ page. It names what was found.</li>
-        <li>Hit the controller's pads or keys. They play the sixteen pads of the bank on screen, harder hits louder. Note C1 (number 36) is the bank's first pad, and the sixteen pads repeat every sixteen notes, so it works wherever your controller's pads start.</li>
+        <li><b>Over Bluetooth:</b> switch Bluetooth on in the handheld's system menu once, and switch on the controller's Bluetooth. PocketPads searches for about twelve seconds each time it starts and connects to any Bluetooth MIDI controller it finds. If the controller was off then, switch it on and press <kbd class="face">A</kbd> on the <span class="row">BLUETOOTH MIDI</span> row of the PROJ page to search again. Nothing needs pairing in the system menu.</li>
+        <li>Check the <span class="row">MIDI DEVICES</span> row near the bottom of the PROJ page. It names what was found, USB and Bluetooth.</li>
+        <li>Hit the controller's pads or keys. They play the sixteen pads of the bank on screen, harder hits louder. Note C1 (number 36) is the bank's first pad, and the sixteen pads repeat every sixteen notes, so it works wherever your controller's pads start. Pad 1 is at the bottom left of the grid and pad 16 at the top right, the way pad controllers are numbered, so the pad you hit is the pad that lights up.</li>
         <li>Change bank on the handheld with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd> and the controller plays the new bank.</li>
-        <li>Turn a knob. The first eight knobs you touch become, in the order you first turn them, the selected pad's volume, pitch, filter, delay, reverb, start, end and fade out. A message names the setting as you turn it.</li>
-        <li>Start and stop buttons on a controller start and stop the beat.</li>
+        <li>Turn a knob. The first eight knobs you touch become, in the order you first turn them, knobs 1 to 8: the selected pad's volume, pitch, filter, delay, reverb, fade out, start and end. A message names the setting as you turn it. Up to eight more become knobs 9 to 16, which start as tempo, master volume, swing, compressor, delay feedback and reverb size.</li>
+        <li><b>To change what a knob does:</b> open <span class="row">MIDI KNOBS</span> on the PROJ page. Turn a knob to jump to its row, or move with up and down, then press left or right to pick its setting, or OFF. <kbd class="face">X</kbd> puts every knob back as it came and <kbd class="face">B</kbd> closes the list. Your choices are kept on the handheld for every project. The list also shows the last message the controller sent, which helps when a control seems to do nothing.</li>
+        <li>Transport buttons work by themselves: play, stop, pause (plays or stops) and record (the same as <kbd class="face">X</kbd> on the PLAY page), for controllers that send the standard start, stop or machine-control messages.</li>
+        <li><b>M-Vave SMC-PAD</b> (<a href="#smc">drawing and full list below</a>)<b>:</b> its eight knobs are knobs 1 to 8 from the start, counted as on the controller (1 bottom left, 2 bottom right, and upward in pairs, so the top two knobs set where the sound starts and ends), and its KNOB BANK button turns them into knobs 9 to 16. Play, stop and record do what they say, pause stops, and <kbd>&lt;&lt;</kbd> and <kbd>&gt;&gt;</kbd> choose the previous or next pattern. Its PAD BANK button switches PocketPads between pads 1–16 and pads 17–32, on the first pad you hit afterwards. Note repeat on the controller works as it is, because the controller repeats the notes itself.</li>
         <li>To record from the controller, turn record on (<kbd class="face">X</kbd> on the PLAY page) and start the beat, just as with the buttons.</li>
         <li><b>To play a synth from PocketPads:</b> set <span class="row">MIDI OUT</span> on the PROJ page to a channel from 1 to 16. Every pad that sounds also sends a note, with its step note, and clock, start and stop go out to keep other gear in time.</li>
       </ol>
     </div>
-    <div class="tip"><p><b>Still new.</b> MIDI has been tried with one USB controller's pads. Bluetooth MIDI is not built. If your controller is not found, see <a href="#help">Fixing problems</a>.</p></div>
+    <h4 id="smc">Controller reference: M-Vave SMC-PAD and SMC-PAD Pocket</h4>
+    <p class="ctl-intro">What each control does in PocketPads as it comes. The drawings show how the controls are numbered, not where everything sits on the case.</p>
+    <figure class="screen ctl-fig">
+      <div class="ctl"><svg class="ctl-knobs" viewBox="0 0 250 340" role="img" aria-label="The eight knobs in two columns: knob 1 volume at the bottom left, 2 pitch at the bottom right, 3 filter and 4 delay above them, then 5 reverb and 6 fade out, and 7 start and 8 end at the top."><circle class="knob" cx="65" cy="285" r="25"/><text class="num mid" x="65" y="293">1</text><text class="sub mid" x="65" y="331">VOLUME</text><circle class="knob" cx="185" cy="285" r="25"/><text class="num mid" x="185" y="293">2</text><text class="sub mid" x="185" y="331">PITCH</text><circle class="knob" cx="65" cy="202" r="25"/><text class="num mid" x="65" y="210">3</text><text class="sub mid" x="65" y="248">FILTER</text><circle class="knob" cx="185" cy="202" r="25"/><text class="num mid" x="185" y="210">4</text><text class="sub mid" x="185" y="248">DELAY</text><circle class="knob" cx="65" cy="119" r="25"/><text class="num mid" x="65" y="127">5</text><text class="sub mid" x="65" y="165">REVERB</text><circle class="knob" cx="185" cy="119" r="25"/><text class="num mid" x="185" y="127">6</text><text class="sub mid" x="185" y="165">FADE OUT</text><circle class="knob" cx="65" cy="36" r="25"/><text class="num mid" x="65" y="44">7</text><text class="sub mid" x="65" y="82">START</text><circle class="knob" cx="185" cy="36" r="25"/><text class="num mid" x="185" y="44">8</text><text class="sub mid" x="185" y="82">END</text></svg><svg class="ctl-pads" viewBox="0 0 340 340" role="img" aria-label="SMC-PAD pads. Sixteen pads in a four-by-four grid, numbered from 1 at the bottom left to 16 at the top right, sending notes 36 to 51."><rect class="pad" x="6" y="255" width="77" height="77" rx="9"/><text class="num" x="17" y="287">1</text><text class="sub" x="17" y="317">note 36</text><rect class="pad" x="89" y="255" width="77" height="77" rx="9"/><text class="num" x="100" y="287">2</text><text class="sub" x="100" y="317">note 37</text><rect class="pad" x="172" y="255" width="77" height="77" rx="9"/><text class="num" x="183" y="287">3</text><text class="sub" x="183" y="317">note 38</text><rect class="pad" x="255" y="255" width="77" height="77" rx="9"/><text class="num" x="266" y="287">4</text><text class="sub" x="266" y="317">note 39</text><rect class="pad" x="6" y="172" width="77" height="77" rx="9"/><text class="num" x="17" y="204">5</text><text class="sub" x="17" y="234">note 40</text><rect class="pad" x="89" y="172" width="77" height="77" rx="9"/><text class="num" x="100" y="204">6</text><text class="sub" x="100" y="234">note 41</text><rect class="pad" x="172" y="172" width="77" height="77" rx="9"/><text class="num" x="183" y="204">7</text><text class="sub" x="183" y="234">note 42</text><rect class="pad" x="255" y="172" width="77" height="77" rx="9"/><text class="num" x="266" y="204">8</text><text class="sub" x="266" y="234">note 43</text><rect class="pad" x="6" y="89" width="77" height="77" rx="9"/><text class="num" x="17" y="121">9</text><text class="sub" x="17" y="151">note 44</text><rect class="pad" x="89" y="89" width="77" height="77" rx="9"/><text class="num" x="100" y="121">10</text><text class="sub" x="100" y="151">note 45</text><rect class="pad" x="172" y="89" width="77" height="77" rx="9"/><text class="num" x="183" y="121">11</text><text class="sub" x="183" y="151">note 46</text><rect class="pad" x="255" y="89" width="77" height="77" rx="9"/><text class="num" x="266" y="121">12</text><text class="sub" x="266" y="151">note 47</text><rect class="pad" x="6" y="6" width="77" height="77" rx="9"/><text class="num" x="17" y="38">13</text><text class="sub" x="17" y="68">note 48</text><rect class="pad" x="89" y="6" width="77" height="77" rx="9"/><text class="num" x="100" y="38">14</text><text class="sub" x="100" y="68">note 49</text><rect class="pad" x="172" y="6" width="77" height="77" rx="9"/><text class="num" x="183" y="38">15</text><text class="sub" x="183" y="68">note 50</text><rect class="pad" x="255" y="6" width="77" height="77" rx="9"/><text class="num" x="266" y="38">16</text><text class="sub" x="266" y="68">note 51</text></svg></div>
+      <figcaption><b>SMC-PAD.</b> Knobs and pads are numbered as printed on the controller, from the bottom left. Each knob is labelled with the setting it changes on the selected pad; change any of them in <span class="row">MIDI KNOBS</span> on the PROJ page.</figcaption>
+    </figure>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>SMC-PAD control</th><th>What it does in PocketPads</th></tr></thead>
+      <tbody>
+        <tr><td>Pads 1–16</td><td>Play the sixteen pads of the bank on screen. Harder hits are louder.</td></tr>
+        <tr><td>PAD BANK</td><td>Switches between pads 1–16 and pads 17–32. The screen follows on the first pad you hit afterwards. Reach pads 33–64 with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd> on the handheld.</td></tr>
+        <tr><td>Knobs 1–8</td><td>The selected pad's volume, pitch, filter, delay, reverb, fade out, start and end.</td></tr>
+        <tr><td>KNOB BANK</td><td>Turns the same knobs into knobs 9–16: tempo, master volume, swing, compressor, delay feedback and reverb size. Knobs 15 and 16 are off until you give them a job.</td></tr>
+        <tr><td>PLAY</td><td>Starts the beat.</td></tr>
+        <tr><td>STOP, PAUSE</td><td>Stop the beat. The controller sends the same message for both.</td></tr>
+        <tr><td>RECORD</td><td>Record on or off, the same as <kbd class="face">X</kbd> on the PLAY page.</td></tr>
+        <tr><td>&lt;&lt; and &gt;&gt;</td><td>Previous and next pattern, A to H.</td></tr>
+        <tr><td>NOTE REPEAT</td><td>Works inside the controller: it repeats the pad you hold, and PocketPads plays each repeat.</td></tr>
+        <tr><td>SHIFT, NOTE, Bluetooth</td><td>Work inside the controller and send nothing to PocketPads.</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <figure class="screen ctl-fig ctl-small">
+      <div class="ctl"><svg class="ctl-pads" viewBox="0 0 340 340" role="img" aria-label="SMC-PAD Pocket pads. Sixteen pads in a four-by-four grid, numbered from 1 at the bottom left to 16 at the top right, sending notes 36 to 51."><rect class="pad" x="6" y="255" width="77" height="77" rx="9"/><text class="num" x="17" y="287">1</text><text class="sub" x="17" y="317">note 36</text><rect class="pad" x="89" y="255" width="77" height="77" rx="9"/><text class="num" x="100" y="287">2</text><text class="sub" x="100" y="317">note 37</text><rect class="pad" x="172" y="255" width="77" height="77" rx="9"/><text class="num" x="183" y="287">3</text><text class="sub" x="183" y="317">note 38</text><rect class="pad" x="255" y="255" width="77" height="77" rx="9"/><text class="num" x="266" y="287">4</text><text class="sub" x="266" y="317">note 39</text><rect class="pad" x="6" y="172" width="77" height="77" rx="9"/><text class="num" x="17" y="204">5</text><text class="sub" x="17" y="234">note 40</text><rect class="pad" x="89" y="172" width="77" height="77" rx="9"/><text class="num" x="100" y="204">6</text><text class="sub" x="100" y="234">note 41</text><rect class="pad" x="172" y="172" width="77" height="77" rx="9"/><text class="num" x="183" y="204">7</text><text class="sub" x="183" y="234">note 42</text><rect class="pad" x="255" y="172" width="77" height="77" rx="9"/><text class="num" x="266" y="204">8</text><text class="sub" x="266" y="234">note 43</text><rect class="pad" x="6" y="89" width="77" height="77" rx="9"/><text class="num" x="17" y="121">9</text><text class="sub" x="17" y="151">note 44</text><rect class="pad" x="89" y="89" width="77" height="77" rx="9"/><text class="num" x="100" y="121">10</text><text class="sub" x="100" y="151">note 45</text><rect class="pad" x="172" y="89" width="77" height="77" rx="9"/><text class="num" x="183" y="121">11</text><text class="sub" x="183" y="151">note 46</text><rect class="pad" x="255" y="89" width="77" height="77" rx="9"/><text class="num" x="266" y="121">12</text><text class="sub" x="266" y="151">note 47</text><rect class="pad" x="6" y="6" width="77" height="77" rx="9"/><text class="num" x="17" y="38">13</text><text class="sub" x="17" y="68">note 48</text><rect class="pad" x="89" y="6" width="77" height="77" rx="9"/><text class="num" x="100" y="38">14</text><text class="sub" x="100" y="68">note 49</text><rect class="pad" x="172" y="6" width="77" height="77" rx="9"/><text class="num" x="183" y="38">15</text><text class="sub" x="183" y="68">note 50</text><rect class="pad" x="255" y="6" width="77" height="77" rx="9"/><text class="num" x="266" y="38">16</text><text class="sub" x="266" y="68">note 51</text></svg></div>
+      <figcaption><b>SMC-PAD Pocket.</b> Its sixteen pads are numbered the same way and play the bank on screen. Change bank with <kbd>SELECT</kbd>+<kbd class="face">Y</kbd> on the handheld.</figcaption>
+    </figure>
+    <div class="tip"><p><b>Still new.</b> MIDI has been tried with one USB controller's pads, and with an M-Vave SMC-PAD and SMC-PAD Pocket over Bluetooth. Bluetooth works for controllers playing PocketPads; notes and clock going out still need USB. If your controller is not found, see <a href="#help">Fixing problems</a>.</p></div>
   </article>
 
   <article class="tut" id="t-grainbrick">
@@ -586,7 +634,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
     exports/           exported songs and patterns
     converted/         WAV copies of MP3, FLAC and other files
     <i>your folders</i>       anything you copy in
-  state.json           last project slot, MIDI out channel, stick effects
+  state.json           last project slot, MIDI out channel, stick effects, knob settings
   pocketpads.log       what happened in the last session</pre>
         <div class="table-wrap">
         <table>
@@ -848,6 +896,8 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td><span class="row">MASTER</span></td><td>Overall output level, 0 to 150.</td></tr>
       <tr><td><span class="row">MIDI OUT</span></td><td>Off, or the channel (1 to 16) that pads send notes on.</td></tr>
       <tr><td><span class="row">MIDI DEVICES</span></td><td>Shows the controllers that are connected.</td></tr>
+      <tr><td><span class="row">MIDI KNOBS</span></td><td><kbd class="face">A</kbd> opens the list of controller knobs, to choose what each one changes.</td></tr>
+      <tr><td><span class="row">BLUETOOTH MIDI</span></td><td>Shows the Bluetooth controllers that are connected. <kbd class="face">A</kbd> searches for more.</td></tr>
       <tr><td><span class="row">IMPORT CHOPS</span></td><td>Puts a GrainBrick project's slices on the pads. Shown only when GrainBrick is installed. See <a href="#t-grainbrick">tutorial 14</a>.</td></tr>
       <tr><td><span class="row">GRAINBRICK</span></td><td>Saves, opens GrainBrick, and returns here when you quit it.</td></tr>
       <tr><td><span class="row">QUIT</span></td><td>Saves and exits.</td></tr>
@@ -899,6 +949,7 @@ footer { max-width: 78rem; margin: 0 auto; padding: 2rem 1.5rem 3rem; border-top
       <tr><td>"TOO LONG" on stretch, spread, chords or step notes</td><td>Trim the pad with <span class="row">START</span> and <span class="row">END</span>, or chop it first.</td></tr>
       <tr><td>Patterns will not switch</td><td>Song mode is on, so patterns follow the chain. Turn <span class="row">SONG MODE</span> off on the SONG page.</td></tr>
       <tr><td>MIDI controller not listed</td><td>Unplug it and plug it in again, then look at the <span class="row">MIDI DEVICES</span> row. The controller has to work as a plain USB MIDI device, without an app of its own.</td></tr>
+      <tr><td>Bluetooth controller not found</td><td>Check that Bluetooth is on in the handheld's system menu and on the controller, and that the controller is not already connected to a phone or computer. Then press <kbd class="face">A</kbd> on the <span class="row">BLUETOOTH MIDI</span> row.</td></tr>
       <tr><td>PocketPads closes by itself</td><td>Launch it again; your last save is intact. Please report it with <code>pocketpads_crash.log</code> from the app's folder.</td></tr>
     </tbody>
   </table>
