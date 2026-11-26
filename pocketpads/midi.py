@@ -67,10 +67,32 @@ def mmc(raw):
     return None
 
 
+class EventQueue(deque):
+    """The queue of decoded input. Whatever thread adds to it also raises .arrived, so the screen thread can
+    act on a pad hit at once instead of at its next frame (up to 33 ms later), and .at says when it came."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.arrived = threading.Event()
+        self.at = 0.0
+
+    def append(self, item):
+        super().append(item)
+        self.at = time.time()
+        self.arrived.set()
+
+    def extend(self, items):
+        items = list(items)
+        if items:
+            super().extend(items)
+            self.at = time.time()
+            self.arrived.set()
+
+
 class MidiPort:
     def __init__(self, log=lambda msg: None):
         self.log = log
-        self.events = deque(maxlen=512)    # decoded input, for the UI thread
+        self.events = EventQueue(maxlen=512)    # decoded input, for the UI thread
         self.out = deque(maxlen=512)       # note-ons waiting to go: (due time, channel, note, velocity)
         self.devices = []                  # names of connected devices
         self.error = ""
@@ -309,6 +331,179 @@ def ble_parse(packet):
         elif kind == 0xC0:
             out.append(("pc", a))
     return out
+
+
+class RawMidi:
+    """Events in a stream of plain MIDI bytes (as a USB device or Android delivers them), in the form decode()
+    gives. Keeps the running status and a system exclusive message that is split across calls."""
+
+    def __init__(self):
+        self.status, self.data, self.sysex = 0, [], None
+
+    def feed(self, raw):
+        out = []
+        for b in raw:
+            if b >= 0xF8:                           # realtime: may come in the middle of anything
+                if b in (0xFA, 0xFB):
+                    out.append(("start",))
+                elif b == 0xFC:
+                    out.append(("stop",))
+            elif b == 0xF0:
+                self.sysex, self.status = [0xF0], 0
+            elif self.sysex is not None:
+                if b & 0x80:                        # F7, or a status byte that cuts it short
+                    got = mmc(bytes(self.sysex + [0xF7])) if b == 0xF7 else None
+                    if got:
+                        out.append(got)
+                    self.sysex = None
+                    if b != 0xF7:
+                        self.status, self.data = (b if b < 0xF0 else 0), []
+                elif len(self.sysex) < 64:
+                    self.sysex.append(b)
+            elif b & 0x80:
+                self.status, self.data = (b if b < 0xF0 else 0), []
+            elif self.status:
+                self.data.append(b)
+                need = _LENGTH.get(self.status & 0xF0)
+                if need is None:
+                    self.data = []
+                elif len(self.data) == need:
+                    a, v = self.data[0], self.data[1] if need == 2 else 0
+                    self.data = []
+                    kind = self.status & 0xF0
+                    if kind == 0x90:
+                        out.append(("note", a, v) if v else ("off", a))
+                    elif kind == 0x80:
+                        out.append(("off", a))
+                    elif kind == 0xB0:
+                        out.append(("cc", a, v))
+                    elif kind == 0xC0:
+                        out.append(("pc", a))
+        return out
+
+
+class AndroidMidi:
+    """Controllers on Android, USB and Bluetooth, through the system's own MIDI service. Stands in for BleMidi:
+    the same start(), search(), stop(), .devices and .status, and events land in the same queue. The Java half
+    is android/java/.../PPMidi.java. In only, for now: no notes or clock out, and no pad lights."""
+    SEARCH_SECONDS = 12
+
+    def __init__(self, events, log=lambda msg: None):
+        self.events, self.log = events, log
+        self.devices, self.status, self.error = [], "off", ""
+        self.running = False
+        self.search_until = 0.0
+        self._want_scan = False
+        self._note = ""
+        self.raw_left = int(os.environ.get("PP_MIDI_LOG", 12 if "ANDROID_ARGUMENT" in os.environ else 0))
+
+    def start(self):
+        try:
+            from jnius import autoclass
+            self.java = autoclass("io.github.prone.pocketpads.PPMidi")
+            self.activity = autoclass("org.kivy.android.PythonActivity").mActivity
+            why = self.java.start(self.activity)
+            if why:
+                raise OSError(why)
+        except Exception as e:
+            self.log("android midi unavailable: %s" % (str(e)[:200] or type(e).__name__))
+            self.error = self.status = "not available on this device"
+            return False
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+        self.search()
+        return True
+
+    def search(self):
+        """Look for Bluetooth controllers for a few seconds. Asks for the Bluetooth permission the first time."""
+        if not self.running:
+            return
+        self.search_until = time.time() + self.SEARCH_SECONDS
+        try:
+            from android.permissions import check_permission, request_permissions
+            need = ["android.permission.BLUETOOTH_SCAN", "android.permission.BLUETOOTH_CONNECT",
+                    "android.permission.ACCESS_FINE_LOCATION"]
+            missing = [p for p in need[:2] if not check_permission(p)]
+            if missing:
+                # The answer comes on another thread; the scan starts from ours once it is yes.
+                request_permissions(need, lambda perms, grants: setattr(self, "_want_scan", True))
+                return
+        except Exception as e:                      # an older Android without these: just try
+            self.log("android midi permissions: %s" % str(e)[:120])
+        self._want_scan = True
+
+    def flash(self, i, block=None):
+        pass                                        # pad lights: not on Android yet
+
+    def _run(self):
+        parser, last_names = RawMidi(), 0.0
+        try:
+            while self.running:
+                raw = self.java.poll()
+                if raw is not None:
+                    data = bytes(b & 255 for b in raw)
+                    if self.raw_left > 0:           # the first packets go to the log, to learn a new controller
+                        self.raw_left -= 1
+                        self.log("android midi raw: %s" % data.hex(" "))
+                    self.events.extend(parser.feed(data))
+                    continue                        # there may be more right behind it
+                raw = self.java.pollBle()            # Bluetooth packets, each behind two bytes of length
+                if raw is not None:
+                    data, i = bytes(b & 255 for b in raw), 0
+                    while i + 2 <= len(data):
+                        n = data[i] | data[i + 1] << 8
+                        packet = data[i + 2:i + 2 + n]
+                        i += 2 + n
+                        if self.raw_left > 0:
+                            self.raw_left -= 1
+                            self.log("android midi bluetooth raw: %s" % packet.hex(" "))
+                        self.events.extend(ble_parse(packet))
+                    continue
+                now = time.time()
+                if self._want_scan:
+                    self._want_scan = False
+                    why = self.java.scan(self.SEARCH_SECONDS)
+                    self.log("android midi: searching%s" % (" - " + why if why else ""))
+                    if why:
+                        self.log("android midi search: %s" % why)
+                        self.error, self.search_until = why, 0.0
+                    else:
+                        self.error = ""
+                if now - last_names > 0.5:
+                    last_names = now
+                    note = str(self.java.note())
+                    if note != self._note:          # what the Java half has to say, once each
+                        self._note = note
+                        self.log("android midi: %s" % note[:300])
+                    names = [n for n in str(self.java.devices()).split("\n") if n]
+                    if names != self.devices:
+                        self.log("android midi devices: %s" % (", ".join(names) or "none"))
+                        self.devices = names
+                    if now < self.search_until:
+                        self.status = (", ".join(names) + "  -  " if names else "") + "searching..."
+                    else:
+                        self.status = ", ".join(names) or self.error or "none connected  -  A to search"
+                time.sleep(0.003)
+        except Exception as e:                      # MIDI must never take the app down
+            self.error = "%s: %s" % (type(e).__name__, str(e)[:80])
+            self.log("android midi error: %s" % self.error)
+        finally:
+            try:
+                import jnius
+                jnius.detach()                      # a thread that called into Java has to say goodbye to it
+            except Exception:
+                pass
+
+    def stop(self):
+        if not self.running:
+            return
+        self.running = False
+        self.thread.join(timeout=2.0)
+        try:
+            self.java.stop()
+        except Exception as e:
+            self.log("android midi stop: %s" % str(e)[:120])
 
 
 # The SMC-PAD's pad lights do not answer MIDI. Its maker's app sets them over a second Bluetooth channel, and

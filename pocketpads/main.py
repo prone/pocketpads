@@ -189,6 +189,7 @@ class App:
         self.midi_last = ""             # the last message a controller sent, shown in that list
         self.midi_block = None          # which sixteen notes the controller's pads last sent (its own pad bank)
         self.light_seen = [0.0] * NPADS # when each pad last sounded, as far as the controller's lights were told
+        self.midi_waits = []
         self.midi_logged = set()        # messages already written to the log (each kind once)
         self.midi_rep = {}              # note -> pad, for pads repeating while a controller pad is held
         self.midi_seen = 0              # how many MIDI devices were connected last time we looked
@@ -208,7 +209,8 @@ class App:
                     self.stick_fx[axis] = name
         except (OSError, ValueError, TypeError, AttributeError):
             pass
-        self.ble = midi.BleMidi(self.midi.events, self.logline)     # Bluetooth controllers feed the same queue
+        # Bluetooth controllers feed the same queue (on Android: every controller, through the system's MIDI)
+        self.ble = (midi.AndroidMidi if ANDROID else midi.BleMidi)(self.midi.events, self.logline)
         if not os.environ.get("PP_NOMIDI"):
             self.midi.start()
             self.ble.start()
@@ -2734,8 +2736,17 @@ class App:
         smc = self.smc()
         if smc and self.knob_ccs != self.SMC_KNOBS:     # an SMC-PAD: its two banks of knobs are knobs 1-16
             self.knob_ccs = list(self.SMC_KNOBS)
+        waited = time.time() - getattr(m.events, "at", 0.0) if m.events else None
+        if hasattr(m.events, "arrived"):
+            m.events.arrived.clear()
         for ev in m.poll():
             kind = ev[0]
+            if kind == "note" and waited is not None and waited < 1.0:
+                # How long hits wait between arriving and being played: one line in the log per 20 hits.
+                self.midi_waits.append(waited * 1000)
+                if len(self.midi_waits) >= 20:
+                    w, self.midi_waits = sorted(self.midi_waits), []
+                    self.logline("midi wait before playing, 20 hits: median %.1f ms, longest %.1f ms" % (w[10], w[-1]))
             if kind != "off":
                 fmt = {"note": "NOTE %d", "cc": "CC %d = %d", "pc": "PROGRAM %d", "mmc": "MMC %d",
                        "start": "START", "stop": "STOP"}[kind]
@@ -2791,7 +2802,7 @@ class App:
             self.save_project(quiet=True, autosave=True)
 
     def loop(self):
-        clock = pygame.time.Clock()
+        next_frame = time.time()
         self.repaint_until = time.time() + 4.0      # counted from here: loading may have taken a while
         while self.running:
             for ev in pygame.event.get():
@@ -2815,7 +2826,17 @@ class App:
             self.draw()
             if self.previewing and time.time() >= self.preview_end:
                 self.previewing = None
-            clock.tick(30)
+            # Wait for the next frame, but not deaf: a controller's pad hit is played the moment it arrives.
+            next_frame = max(next_frame + 1 / 30.0, time.time())
+            arrived = getattr(self.midi.events, "arrived", None)
+            while True:
+                left = next_frame - time.time()
+                if left <= 0:
+                    break
+                if arrived is None:
+                    time.sleep(left)
+                elif arrived.wait(left):
+                    self.tick_midi()
         if self.eng.render_errors:
             self.logline("render errors: %d, first:\n%s" % (self.eng.render_errors, self.eng.last_error))
         self.logline("exit: dropouts=%d peak_render=%.1fms" % (self.eng.underruns, self.eng.max_render_ms))

@@ -628,7 +628,10 @@ class Engine:
         self._skip = set()
         self.running = False
         self.sdl = self.dev = None
-        self.queue_blocks = 3
+        # Blocks kept ready ahead of the sound card: each is 12 ms more between a hit and its sound. Three is
+        # what a slow handheld needs to never run dry; PP_QUEUE sets another number.
+        # A Retroid Pocket 4 Pro crackled with one and is clean with two.
+        self.queue_blocks = max(1, int(os.environ.get("PP_QUEUE", 0) or (2 if "ANDROID_ARGUMENT" in os.environ else 3)))
         # Held by the audio thread while it renders a block. The screen code waits on it between
         # drawing steps (see breathe in main.py), so a block is rendered without the two threads
         # fighting over the interpreter, which on a handheld made blocks late and the sound crackle.

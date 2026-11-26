@@ -4,7 +4,9 @@ PocketPads packaged as an Android app with [python-for-android](https://github.c
 
 Your own sounds go in a `PocketPads` folder on the device's shared storage (WAV files; the app asks for "all files access" the first time the folder is opened). That part is new and not yet confirmed on a device.
 
-Not there yet: MIDI and Bluetooth MIDI, the microphone, and MP3 conversion.
+MIDI in works over Bluetooth (an M-Vave SMC-PAD: pads confirmed) and should over USB, which is untried. A controller paired in Android's Bluetooth settings is picked up at launch; an unpaired one is found by BLUETOOTH MIDI on the PROJ page. The Java half is in `java/`.
+
+Not there yet: MIDI out and clock, the SMC-PAD's pad lights, the microphone, and MP3 conversion.
 
 ## Build
 

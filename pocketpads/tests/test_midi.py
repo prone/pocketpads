@@ -118,3 +118,10 @@ a.follow_after = 0.0; a.draw_beat(); assert a.cur_step == 52
 a.eng.playing, a.eng.step = False, -1; a.draw_beat(); assert a.cur_step == 52
 pat["length"] = 16; a.cur_step = 0
 print("beat follow tests passed")
+# plain MIDI bytes (Android, USB): running status, realtime in the middle, sysex split across calls
+r = midi.RawMidi()
+assert r.feed(bytes([0x99, 36, 100, 37, 0, 0xF8, 38, 90])) == [("note", 36, 100), ("off", 37), ("note", 38, 90)]
+assert r.feed(bytes([0xB0, 30])) == [] and r.feed(bytes([5, 0x89, 36, 0])) == [("cc", 30, 5), ("off", 36)]
+assert r.feed(bytes([0xF0, 0x7F, 0x7F, 6])) == [] and r.feed(bytes([2, 0xF7, 0xFA, 0xC0, 3])) == [("mmc", 2), ("start",), ("pc", 3)]
+assert r.feed(bytes([0xE0, 1, 2, 0xFC, 40])) == [("stop",)]          # pitch bend is read and dropped; a stray byte too
+print("raw midi tests passed")
