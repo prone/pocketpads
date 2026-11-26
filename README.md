@@ -118,6 +118,10 @@ for t in engine effects sampler robustness styles midi; do python pocketpads/tes
 
 Each prints a line ending in `OK` when it passes.
 
+## Android (experimental)
+
+An early Android build runs on a Retroid Pocket 4 Pro: screens, buttons, the built-in kit and sound. See [`android/`](android/README.md) for what is missing and how to build it.
+
 ## Known limits
 
 - Changing a pad setting re-renders that pad's audio; on samples longer than a few seconds this waits until you stop adjusting.

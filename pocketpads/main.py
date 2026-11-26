@@ -75,6 +75,11 @@ PAD_BUTTONS = {"a": "B", "b": "A", "x": "Y", "y": "X", "leftshoulder": "l1", "ri
                "dpleft": "left", "dpright": "right"}
 
 
+ANDROID = sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
+# Joystick button numbers as SDL gives them on Android, named by what is printed on the button.
+ANDROID_BUTTONS = {"0": "A", "1": "B", "2": "X", "3": "Y", "4": "select", "6": "start", "9": "l1", "10": "r1",
+                   "11": "up", "12": "down", "13": "left", "14": "right", "15": "l2", "16": "r2"}
+
 _MIXED = {}
 
 
@@ -126,6 +131,7 @@ class App:
 
         self.eng = Engine()
         self.page, self.sel, self.cur_step = 0, 0, 0
+        self.follow_after = 0.0         # the beat page follows the playing step again from this time on
         self.sound_row, self.proj_row, self.fx_row = 0, 0, 0
         self.song_row, self.song_cur, self.copy_to = 0, 0, 1
         self.paint = None      # BEAT page: value being painted while A is held
@@ -328,7 +334,8 @@ class App:
                 with open(os.path.join(APP_DIR, "buttons.json")) as f:
                     self._joy_map = json.load(f)
             except (OSError, ValueError):
-                self._joy_map = {}
+                # Android (experimental build): SDL numbers a built-in gamepad's buttons the same way everywhere.
+                self._joy_map = dict(ANDROID_BUTTONS) if ANDROID else {}
         return self._joy_map
 
     def button(self, name, down):
@@ -761,7 +768,10 @@ class App:
             if self.eng.pads[pad].mode == HOLD:
                 self.gated[button] = pad
 
+    FOLLOW_HOLD = 4.0                   # seconds the beat page stays where you are working before it follows again
+
     def press_beat(self, b, sel):
+        self.follow_after = time.time() + self.FOLLOW_HOLD
         e = self.eng
         pat = e.patterns[e.cur_pat]
         row, notes = pat["steps"][self.sel], pat["notes"][self.sel]
@@ -2227,6 +2237,10 @@ class App:
         pat = e.patterns[e.cur_pat]
         length = pat["length"]
         self.cur_step = min(self.cur_step, length - 1)
+        if e.playing and e.step >= 0 and time.time() >= self.follow_after and e.step // 16 != self.cur_step // 16:
+            # Follow the beat: show the sixteen steps that are playing, with the cursor in the same column.
+            # It stays there when the beat stops. Pressing something holds the view still for a moment (FOLLOW_HOLD).
+            self.cur_step = min(length - 1, (e.step // 16) * 16 + self.cur_step % 16)
         view = (self.cur_step // 16) * 16
         gx, gy, cw, rh = 96, 46, 33.5, 17.8
         any_solo = any(p.solo for p in e.pads)

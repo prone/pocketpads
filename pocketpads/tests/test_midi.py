@@ -105,3 +105,16 @@ b = midi.BleMidi(midi.deque()); lt = L(); b._links = {"x": {"name": "SMC-PAD", "
 b.flash(5); b.flash(2, 1); b.flash(2, 2)
 assert lt.got == [5, 21, 18, 2], lt.got
 print("pad light tests passed")
+# the beat page follows the playing steps, sixteen at a time, and stays put when the beat stops
+a.page = main.PAGES.index("BEAT")
+pat = a.eng.patterns[a.eng.cur_pat]; pat["length"] = 64
+a.cur_step, a.follow_after = 3, 0.0
+a.eng.playing, a.eng.step = True, 37
+a.draw_beat(); assert a.cur_step == 35, a.cur_step              # third page, same column
+a.eng.step = 2; a.draw_beat(); assert a.cur_step == 3
+a.eng.step = 50; a.press_beat("right", False); a.draw_beat()    # working on it: the view holds still
+assert a.cur_step == 4
+a.follow_after = 0.0; a.draw_beat(); assert a.cur_step == 52
+a.eng.playing, a.eng.step = False, -1; a.draw_beat(); assert a.cur_step == 52
+pat["length"] = 16; a.cur_step = 0
+print("beat follow tests passed")

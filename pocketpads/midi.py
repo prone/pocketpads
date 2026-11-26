@@ -11,7 +11,6 @@ Timing: the audio you hear is queued a few blocks ahead, so outgoing notes and c
 back by the same amount (`latency`) to land together with the sound.
 """
 import ctypes
-import ctypes.util
 import os
 import threading
 import time
@@ -88,7 +87,12 @@ class MidiPort:
     def start(self):
         """Open the sequencer. Returns False (with .error set) if MIDI is not available here."""
         try:
-            name = ctypes.util.find_library("asound") or "libasound.so.2"
+            try:
+                from ctypes.util import find_library    # here, not at the top: on Android this import fails
+                name = find_library("asound")
+            except ImportError:
+                name = None
+            name = name or "libasound.so.2"
             lib = ctypes.CDLL(name)
             lib.snd_seq_client_info_get_name.restype = ctypes.c_char_p
             seq = ctypes.c_void_p()
