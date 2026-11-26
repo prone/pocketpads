@@ -19,7 +19,7 @@ import pygame
 import kit
 import midi
 import styles
-from engine import (APP_DIR, DATA_DIR, BANK, BLOCK, CHORD_MAX_SECONDS, CHORDS, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NAME_CHARS, NAME_MAX, NBANKS, NPADS, NPAT,
+from engine import (APP_DIR, DATA_DIR, SdlRecorder, BANK, BLOCK, CHORD_MAX_SECONDS, CHORDS, EXPORT_MAX_SECONDS, CHOKE_GROUPS, CRUSH_BITS, CRUSH_RATES, DELAY_TIMES, FITS, HOLD, MAX_STEPS, MIN_STEPS, MODES, NAME_CHARS, NAME_MAX, NBANKS, NPADS, NPAT,
                     PAT_NAMES, RATES, SONG_SLOTS, SR, STRETCH_MAX,
                     STRETCH_MIN, STUTTERS, VARIANT_MAX_SECONDS, Engine, clean_name,
                     find_chops, load_cached, load_wav, prune_cache, write_wav)
@@ -78,7 +78,7 @@ PAD_BUTTONS = {"a": "B", "b": "A", "x": "Y", "y": "X", "leftshoulder": "l1", "ri
 ANDROID = sys.platform == "android" or "ANDROID_ARGUMENT" in os.environ
 IOS = sys.platform == "ios"
 # Where the log goes: beside the program, except where that folder cannot be written to.
-LOG_DIR = DATA_DIR if IOS else APP_DIR
+LOG_DIR = DATA_DIR if IOS or os.environ.get("PP_DATA") else APP_DIR
 # Joystick button numbers as SDL gives them on Android, named by what is printed on the button.
 ANDROID_BUTTONS = {"0": "A", "1": "B", "2": "X", "3": "Y", "4": "select", "6": "start", "9": "l1", "10": "r1",
                    "11": "up", "12": "down", "13": "left", "14": "right", "15": "l2", "16": "r2"}
@@ -142,7 +142,7 @@ class App(Tablet):
         self.waves = {}                 # waveform pictures already drawn (see _wave)
         self.hint_rows = {}             # hint lines already laid out
         pygame.display.set_caption("PocketPads")
-        pygame.mouse.set_visible(False)
+        pygame.mouse.set_visible(bool(self.tablet and not IOS))     # on a computer the mouse is the finger
         self.W, self.H = self.screen.get_size()
         self.touch_ui = False           # the on-screen buttons at the sides are showing (see touch_down)
         self.touches = {}               # finger -> the button it is holding down
@@ -248,6 +248,7 @@ class App(Tablet):
         gc.freeze()
         gc.disable()
         self.eng.start_audio(enable=not os.environ.get("PP_NOAUDIO"))
+        self.logline("audio: %s" % ("ok" if self.eng.dev is not None else "off (%s)" % getattr(self.eng, "audio_error", "not asked for")))
         if self.eng.audio_error:
             self.logline("audio error: " + self.eng.audio_error)
             self.say("NO AUDIO: " + self.eng.audio_error, 6)
@@ -571,6 +572,8 @@ class App(Tablet):
         """A touch on the page itself. Returns the name of a button to release when the finger lifts, if any."""
         e = self.eng
         inside = lambda x, y, w, h: x <= lx < x + w and y <= ly < y + h     # noqa: E731
+        if self.live and self.tablet:               # the dialog has its own two buttons there
+            return self.tap_button(("X" if lx < 320 else "B") if 262 <= ly < 302 else "A")
         if self.recording or self.live:
             return self.tap_button("A")
         if self.confirm:
@@ -591,6 +594,20 @@ class App(Tablet):
                     self.tap_button("A")            # a second tap on the chosen row takes it
                 else:
                     box["idx"] = n
+            return None
+        if self.knobs and self.tablet:              # tap a row to choose it, the chosen row to change it
+            if not inside(60, 34, 520, 296):
+                return self.tap_button("B")
+            if ly >= 304:
+                return self.tap_button("X")
+            n = self.knob_rows()
+            top = max(0, min(self.knobs["row"] - 5, n - 10))
+            i = self._row_at(ly, 64, 20, min(10, n - top))
+            if i is not None:
+                if top + i == self.knobs["row"]:
+                    self.tap_button("right")
+                else:
+                    self.knobs["row"] = top + i
             return None
         if self.knobs:
             return None                             # the knob list is worked with the buttons
@@ -1792,7 +1809,15 @@ class App(Tablet):
             elif row == "MIDI KNOBS":
                 self.knobs = {"row": 0}
             elif row == "BLUETOOTH MIDI":
-                if self.ble.running or self.ble.start():
+                if IOS:                             # the system's own sheet finds and connects them
+                    import apple
+                    why = apple.bluetooth_sheet()
+                    if why:
+                        self.logline("bluetooth sheet: %s" % why)
+                        self.say("BLUETOOTH MIDI COULD NOT OPEN", 3)
+                elif sys.platform == "darwin":
+                    self.say("CONNECT IT IN AUDIO MIDI SETUP: IT THEN SHOWS HERE", 4)
+                elif self.ble.running or self.ble.start():
                     self.ble.search()
                     self.say("SEARCHING: SWITCH THE CONTROLLER'S BLUETOOTH ON", 3)
                 else:
@@ -1924,6 +1949,10 @@ class App(Tablet):
                 return
             self.recording = {"proc": proc, "path": path, "t0": time.time(), "level": 0.0}
             self.logline("record start: android microphone")
+            return
+        if not fake and (IOS or sys.platform in ("darwin", "win32")):       # no arecord there: SDL records
+            self.recording = {"proc": SdlRecorder(path, REC_SECONDS), "path": path, "t0": time.time(), "level": 0.0}
+            self.logline("record start: sdl microphone")
             return
         if fake:
             cmd = ["cp", fake, path]
@@ -2265,10 +2294,14 @@ class App(Tablet):
         self.say("CONVERTING %s ..." % os.path.basename(src)[:36], 60)
         self.draw()
         tmp = out + ".part"
-        if ANDROID:                                 # no ffmpeg there: the system's own decoders, through PPAudio.java
+        if ANDROID or sys.platform in ("darwin", "ios"):    # no ffmpeg needed: the system's own decoders
             try:
-                from jnius import autoclass
-                why = autoclass("io.github.prone.pocketpads.PPAudio").decode(src, tmp, CONVERT_SECONDS)
+                if ANDROID:
+                    from jnius import autoclass
+                    why = autoclass("io.github.prone.pocketpads.PPAudio").decode(src, tmp, CONVERT_SECONDS)
+                else:
+                    import apple
+                    why = apple.decode(src, tmp, CONVERT_SECONDS, SR)
             except Exception as e:
                 why = str(e) or type(e).__name__
             finally:
@@ -2286,7 +2319,18 @@ class App(Tablet):
                                 "-ar", str(SR), "-c:a", "pcm_s16le", "-f", "wav", tmp],
                                capture_output=True, timeout=120)
         except FileNotFoundError:
-            raise ValueError("ffmpeg is not installed")
+            # No ffmpeg (a Windows PC, usually): pygame's own readers manage MP3, OGG and FLAC.
+            try:
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init(SR, -16, 2)
+                data = pygame.sndarray.array(pygame.mixer.Sound(src))[:CONVERT_SECONDS * SR]
+                write_wav(tmp, data.astype(np.float32) / 32768.0)
+                os.replace(tmp, out)
+                return out
+            except Exception:
+                raise ValueError("this kind of file needs ffmpeg installed")
+            finally:
+                pygame.mixer.quit()
         except subprocess.TimeoutExpired:
             raise ValueError("converting took too long")
         finally:
@@ -2546,8 +2590,15 @@ class App(Tablet):
                 self.box(38 + m * 564, 100, 1.5, 150, ORANGE, None, 0)
                 self.text(str(k + 1), 41 + m * 564, 108, "s", ORANGE)
             self.box(38 + pos * 564, 100, 1.5, 150, TEXT, None, 0)
-            self.text("A  drop a slice point        B  finish        X  cancel", 320, 272, "m", TEXT, "c")
-            self.text("Each point starts a new pad. It finishes by itself at the end.", 320, 292, "s", DIM, "c")
+            if self.tablet:
+                self.text("tap the sound to drop a slice point: each one starts a new pad", 320, 256, "s", DIM, "c")
+                self.box(36, 264, 276, 36, PANEL, LINE, 5)
+                self.text("CANCEL", 174, 282, "m", TEXT, "c")
+                self.box(328, 264, 276, 36, TEAL, None, 5)
+                self.text("FINISH", 466, 282, "m", BG, "c")
+            else:
+                self.text("A  drop a slice point        B  finish        X  cancel", 320, 272, "m", TEXT, "c")
+                self.text("Each point starts a new pad. It finishes by itself at the end.", 320, 292, "s", DIM, "c")
         if self.recording:
             r = self.recording
             left = max(0.0, REC_SECONDS - (time.time() - r["t0"]))
@@ -3108,7 +3159,9 @@ class App(Tablet):
                 self.text("selected pad" if spec[0] == "pad" else "whole mix", 330, y + 10, "h", DIM)
             self.text("CC %d" % self.knob_ccs[i] if i < len(self.knob_ccs) else "turn it to add it", 564, y + 10, "h", DIM, "r")
         self.text("LAST RECEIVED:  %s" % (self.midi_last or "nothing yet"), 320, 280, "h", TEXT, "c")
-        self.text("left right change   turn a knob to find it   X all back to default   B done", 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
+        hint = ("tap a knob, tap it again to change it   -   tap here to put all back   -   tap outside when done" if self.tablet
+                else "left right change   turn a knob to find it   X all back to default   B done")
+        self.text(hint, 320, 317, "h", mix(DIM, TEXT, 0.6), "c")
 
     def tick_midi(self):
         """Feed the MIDI port what it needs for clock, and act on what controllers sent."""

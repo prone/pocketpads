@@ -76,6 +76,10 @@ elif sys.platform == "ios":
     # The program's folder is read-only on an iPad; Documents is the app's own, and shows in the Files app.
     DATA_DIR = os.path.join(os.path.expanduser("~"), "Documents")
     os.makedirs(DATA_DIR, exist_ok=True)
+elif os.environ.get("PP_DATA"):
+    # The Mac and Windows apps: the program is sealed inside the app, so the user's files get a folder of their own.
+    DATA_DIR = os.environ["PP_DATA"]
+    os.makedirs(DATA_DIR, exist_ok=True)
 else:
     DATA_DIR = APP_DIR
 _RAMP = np.linspace(1.0, 0.0, FADE, dtype=np.float32)
@@ -379,6 +383,111 @@ def load_wav(path, max_seconds=180):
     # A float WAV can carry NaN or infinity, which would ring round the delay and reverb for ever.
     a = np.clip(np.nan_to_num(a, nan=0.0, posinf=1.0, neginf=-1.0), -8.0, 8.0)
     return np.ascontiguousarray(a, np.float32)
+
+
+class Spec(ctypes.Structure):
+    """SDL's description of an audio device."""
+    _fields_ = [("freq", ctypes.c_int), ("format", ctypes.c_uint16),
+                ("channels", ctypes.c_uint8), ("silence", ctypes.c_uint8),
+                ("samples", ctypes.c_uint16), ("padding", ctypes.c_uint16),
+                ("size", ctypes.c_uint32), ("callback", ctypes.c_void_p),
+                ("userdata", ctypes.c_void_p)]
+
+
+def load_sdl():
+    """The SDL2 library pygame itself uses, for the calls pygame does not offer (queued audio, recording)."""
+    cands = []
+    try:
+        import pygame
+        d = os.path.dirname(pygame.__file__)
+        cands += glob.glob(os.path.join(d, ".dylibs", "libSDL2-2*.dylib"))
+        cands += glob.glob(os.path.join(d, "..", "pygame.libs", "libSDL2-2*.so*"))
+        cands += glob.glob(os.path.join(d, "SDL2.dll"))                 # Windows
+        for base in (d, getattr(sys, "_MEIPASS", d)):                   # inside a packaged Mac or Windows app
+            for pat in ("__dot__dylibs/libSDL2-2*.dylib", "libSDL2-2*.dylib", "SDL2.dll", "pygame/SDL2.dll"):
+                cands += glob.glob(os.path.join(base, pat))
+    except ImportError:
+        pass
+    cands += ["libSDL2-2.0.so.0", "libSDL2.so", "libSDL2.dylib", "SDL2.dll"]
+    if sys.platform == "ios":                   # SDL is a framework inside the app there
+        cands = [os.path.join(os.path.dirname(sys.executable), "Frameworks", "SDL2.framework", "SDL2"), None]
+    sdl = None
+    for c in cands:
+        try:
+            sdl = ctypes.CDLL(c)
+            break
+        except OSError:
+            continue
+    if sdl is None:
+        raise RuntimeError("SDL2 library not found")
+    sdl.SDL_InitSubSystem.argtypes = [ctypes.c_uint32]
+    sdl.SDL_OpenAudioDevice.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(Spec),
+                                        ctypes.POINTER(Spec), ctypes.c_int]
+    sdl.SDL_OpenAudioDevice.restype = ctypes.c_uint32
+    sdl.SDL_DequeueAudio.argtypes = [ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32]
+    sdl.SDL_DequeueAudio.restype = ctypes.c_uint32
+    sdl.SDL_PauseAudioDevice.argtypes = [ctypes.c_uint32, ctypes.c_int]
+    sdl.SDL_CloseAudioDevice.argtypes = [ctypes.c_uint32]
+    sdl.SDL_GetError.restype = ctypes.c_char_p
+    return sdl
+
+
+class SdlRecorder:
+    """Records the default microphone to a WAV file through SDL: the iPad, a Mac, Windows. It stands in for
+    the handheld's arecord process, so it answers poll(), send_signal(), kill() and stderr.read()."""
+
+    def __init__(self, path, seconds):
+        self.path, self.seconds = path, seconds
+        self.stderr, self.error, self.done = self, "", False
+        self._stop = threading.Event()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        dev = sdl = None
+        try:
+            sdl = load_sdl()
+            if sdl.SDL_InitSubSystem(0x10) != 0:
+                raise RuntimeError("audio would not start")
+            want, have = Spec(), Spec()
+            want.freq, want.format, want.channels, want.samples = SR, 0x8010, 1, 1024
+            dev = sdl.SDL_OpenAudioDevice(None, 1, ctypes.byref(want), ctypes.byref(have), 0)
+            if not dev:
+                raise RuntimeError("no microphone: %s" % sdl.SDL_GetError().decode("utf-8", "replace"))
+            sdl.SDL_PauseAudioDevice(dev, 0)
+            buf = ctypes.create_string_buffer(8192)
+            size, limit = 0, int(self.seconds * SR) * 2
+            with open(self.path, "wb") as f:
+                head = lambda n: (b"RIFF" + struct.pack("<I", 36 + n) + b"WAVEfmt "
+                                  + struct.pack("<IHHIIHH", 16, 1, 1, SR, SR * 2, 2, 16) + b"data" + struct.pack("<I", n))
+                f.write(head(0))
+                while size < limit and not self._stop.is_set():
+                    n = sdl.SDL_DequeueAudio(dev, buf, min(len(buf), limit - size)) & ~1
+                    if n:
+                        f.write(buf.raw[:n])
+                        f.flush()
+                        size += n
+                    else:
+                        time.sleep(0.01)
+                f.seek(0)
+                f.write(head(size))
+        except Exception as e:
+            self.error = str(e) or type(e).__name__
+        finally:
+            if dev:
+                sdl.SDL_CloseAudioDevice(dev)
+            self.done = True
+
+    def poll(self):
+        return 0 if self.done else None
+
+    def read(self):
+        return self.error.encode("utf-8", "replace")
+
+    def send_signal(self, _signal=None):
+        self._stop.set()
+
+    kill = send_signal
 
 
 def write_wav(path, audio):
@@ -1106,38 +1215,7 @@ class Engine:
         self.thread.start()
 
     def _open_device(self):
-        cands = []
-        try:
-            import pygame
-            d = os.path.dirname(pygame.__file__)
-            cands += glob.glob(os.path.join(d, ".dylibs", "libSDL2-2*.dylib"))
-            cands += glob.glob(os.path.join(d, "..", "pygame.libs", "libSDL2-2*.so*"))
-        except ImportError:
-            pass
-        cands += ["libSDL2-2.0.so.0", "libSDL2.so", "libSDL2.dylib"]
-        if sys.platform == "ios":                   # SDL is a framework inside the app there
-            cands = [os.path.join(os.path.dirname(sys.executable), "Frameworks", "SDL2.framework", "SDL2"), None]
-        sdl = None
-        for c in cands:
-            try:
-                sdl = ctypes.CDLL(c)
-                break
-            except OSError:
-                continue
-        if sdl is None:
-            raise RuntimeError("SDL2 library not found")
-
-        class Spec(ctypes.Structure):
-            _fields_ = [("freq", ctypes.c_int), ("format", ctypes.c_uint16),
-                        ("channels", ctypes.c_uint8), ("silence", ctypes.c_uint8),
-                        ("samples", ctypes.c_uint16), ("padding", ctypes.c_uint16),
-                        ("size", ctypes.c_uint32), ("callback", ctypes.c_void_p),
-                        ("userdata", ctypes.c_void_p)]
-
-        sdl.SDL_InitSubSystem.argtypes = [ctypes.c_uint32]
-        sdl.SDL_OpenAudioDevice.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(Spec),
-                                            ctypes.POINTER(Spec), ctypes.c_int]
-        sdl.SDL_OpenAudioDevice.restype = ctypes.c_uint32
+        sdl = load_sdl()
         sdl.SDL_QueueAudio.argtypes = [ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32]
         sdl.SDL_GetQueuedAudioSize.argtypes = [ctypes.c_uint32]
         sdl.SDL_GetQueuedAudioSize.restype = ctypes.c_uint32

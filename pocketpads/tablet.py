@@ -783,7 +783,8 @@ class Tablet:
         tiles = [("RECORD MIC", "chopped onto pads %d-%d" % (first + 1, first + BANK)),
                  ("RESAMPLE", "record what you hear onto pad %d" % (self.sel + 1)),
                  ("EXPORT AUDIO", "%s, as a WAV file" % ("the song" if (e.song_on and e.song) else "pattern %s x 4" % PAT_NAMES[e.cur_pat])),
-                 ("BLUETOOTH MIDI", self.clip(self.ble.status, 40) if self.ble.running else "search for controllers")]
+                 ("BLUETOOTH MIDI", self.clip(self.ble.status, 40) if self.ble.running else "search for controllers"),
+                 ("MIDI KNOBS", "what each controller knob changes")]
         for k, (name, sub) in enumerate(tiles):
             self.tab_tile(216, top + 18 + k * 50, 204, name, sub, lambda name=name: self.tab_row(name))
         self.tab_knob_at(478, top + 52, 100, "MASTER")

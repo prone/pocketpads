@@ -80,6 +80,8 @@ Environment variables:
 | Variable | Purpose |
 |---|---|
 | `PP_WINDOW=WxH` | Run in a window of that size instead of full screen |
+| `PP_UI=tablet` | Use the touch layout (the iPad's), worked with the mouse |
+| `PP_DATA=folder` | Keep projects, samples and the log in that folder instead of beside the program |
 | `PP_NOAUDIO=1` | Do not open an audio device |
 | `PP_NOMIDI=1` | Do not open MIDI |
 | `PP_REC_DEVICE` | ALSA capture device for recording (default `hw:0,0`, the Smart Pro's microphone) |
@@ -88,7 +90,7 @@ Environment variables:
 
 ## Other devices
 
-Nothing but the Smart Pro has been tried. The parts most likely to need changes elsewhere are the recording device and the mixer settings applied before recording (`start_record` in `main.py`), the controller button mapping (`PAD_BUTTONS`), and the 1280x720 layout, which scales but was only designed for 16:9. Reports and patches for other handhelds are welcome.
+No other handheld than the Smart Pro has been tried under Linux (for Android, the iPad, the Mac and Windows, see "Other versions" below). The parts most likely to need changes elsewhere are the recording device and the mixer settings applied before recording (`start_record` in `main.py`), the controller button mapping (`PAD_BUTTONS`), and the 1280x720 layout, which scales but was only designed for 16:9. Reports and patches for other handhelds are welcome.
 
 ## Working with GrainBrick
 
@@ -113,14 +115,23 @@ Nothing but the Smart Pro has been tried. The parts most likely to need changes 
 The tests cover the engine and need only NumPy, except `midi`, which runs the whole app without a screen and also needs pygame:
 
 ```
-for t in engine effects sampler robustness styles midi new touch tablet; do python pocketpads/tests/test_$t.py pocketpads; done
+for t in engine effects sampler robustness styles midi new touch tablet apple; do python pocketpads/tests/test_$t.py pocketpads; done
 ```
 
 Each prints a line ending in `OK` when it passes.
 
-## Android (experimental)
+## Other versions (all experimental)
 
-An early Android build runs on a Retroid Pocket 4 Pro: screens, buttons, the built-in kit and sound. See [`android/`](android/README.md) for what is missing and how to build it.
+PocketPads was made for the TrimUI Smart Pro, and that is the version that has had real use. The same program also runs on:
+
+| | How you get it | Layout | Tried on |
+|---|---|---|---|
+| Android | A signed APK on the [releases page](https://github.com/prone/pocketpads/releases); see [`android/`](android/README.md) | The handheld's screens, with on-screen buttons if the device has none | One Retroid Pocket 4 Pro |
+| iPad | Build it with Xcode; see [`ios/`](ios/README.md) | Its own touch layout | One iPad Pro 13-inch |
+| Mac | Build it with `desktop/build.sh`; see [`desktop/`](desktop/README.md) | The touch layout in a window, worked with the mouse | One MacBook (Apple silicon) |
+| Windows | Built by a GitHub workflow; see [`desktop/`](desktop/README.md) | The same | Not yet on a real PC |
+
+Each of those folders says what works there and what does not.
 
 ## Known limits
 

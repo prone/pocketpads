@@ -190,6 +190,22 @@ shot("confirm")
 tap(320, 175 + a.dlg_dy); assert names.get("yes") and not a.confirm
 a.confirm = ("REALLY?", lambda: names.setdefault("no", True))
 tap(20, 20 + a.dlg_dy + 60); assert not a.confirm and "no" not in names
+# the MIDI KNOBS list: tap a row to choose it, tap it again to change what the knob does
+a.page = main.PAGES.index("PROJ"); a.draw()
+a.tab_row("MIDI KNOBS"); assert a.knobs
+shot("knobs")
+tap(200, 64 + 2 * 20 + 10 + a.dlg_dy); assert a.knobs["row"] == 2
+was = a.knob_fn[2]
+tap(200, 64 + 2 * 20 + 10 + a.dlg_dy); assert a.knob_fn[2] != was
+tap(200, 316 + a.dlg_dy); assert a.confirm; tap(320, 175 + a.dlg_dy); assert a.knob_fn == list(a.KNOB_DEFAULT)
+tap(10, 20 + a.dlg_dy + 60); assert not a.knobs
+# live chop: tap to drop points, FINISH keeps them, CANCEL drops them
+a.page = 0; a.sel = 0
+p0 = e.pads[0]
+a.live = {"pad": 0, "path": p0.path, "n": len(p0.raw), "peaks": p0.peaks, "t0": main.time.time(), "marks": []}
+shot("live")
+tap(300, 170 + a.dlg_dy); assert a.live and len(a.live["marks"]) == 1
+tap(100, 280 + a.dlg_dy); assert not a.live and e.pads[0].path == p0.path
 # the handheld layout is untouched by any of this
 assert main.PAGES == list(a.PAGE_NAMES)
 print("ALL TABLET OK")

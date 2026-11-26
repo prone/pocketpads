@@ -43,11 +43,12 @@ The mouse stands in for a finger.
 - `app_main.py` becomes the app's `__main__.py` and starts `main.py` as a script.
 - The user's projects and samples are in the app's Documents folder, which shows in the Files app.
 
-## Not done yet
+## Where it stands
 
-- Touch for two of the handheld's lists: MIDI KNOBS is left off the tablet's PROJ page, and a live chop
-  can be tapped but not cancelled.
-- Running on a real iPad: it builds and signs, but has not been installed and tried yet.
-- Sharp drawing on a Retina screen: it is drawn at the screen's size in points and scaled up.
-- MIDI (Core MIDI), microphone recording, and reading MP3 and other compressed files.
-- Keeping clear of the home indicator and rounded corners.
+- It has run on one iPad Pro 13-inch: pads, knobs and every page were tried there by hand.
+- Written and tested on a Mac, where the same code runs, but not yet tried on an iPad: MIDI
+  controllers (Core MIDI; BLUETOOTH MIDI on the PROJ page opens the system's list of Bluetooth
+  controllers), recording from the microphone, and reading MP3, M4A, AAC, AIFF and FLAC files.
+- Pad lights on the SMC-PAD.
+- It is drawn at the screen's size in points and scaled up, which looks fine on the one iPad tried.
+- An App Store or TestFlight build: for now it is installed from Xcode, on your own iPad.

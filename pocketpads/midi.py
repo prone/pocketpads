@@ -12,6 +12,7 @@ back by the same amount (`latency`) to land together with the sound.
 """
 import ctypes
 import os
+import sys
 import threading
 import time
 from collections import deque
@@ -129,7 +130,7 @@ class MidiPort:
             self.lib, self.seq, self.port = lib, seq, port
             self.client = lib.snd_seq_client_id(seq)
         except (OSError, AttributeError) as e:
-            if not self._start_android():
+            if not (self._start_android() or self._start_apple() or self._start_portmidi()):
                 self.log("midi unavailable: %s" % (str(e)[:200] or type(e).__name__))
                 self.error = "not available on this system"
                 return False
@@ -151,6 +152,31 @@ class MidiPort:
             return True
         except Exception as e:
             self.log("android midi out: %s" % str(e)[:160])
+            return False
+
+    def _start_apple(self):
+        """On a Mac or an iPad: Core MIDI (apple.py) reads the controllers and does the sending."""
+        if sys.platform not in ("darwin", "ios"):
+            return False
+        try:
+            import apple
+            self.java = apple.CoreMidi(self.events, RawMidi, self.log)
+            self.devices = self.java.rescan()
+            return True
+        except Exception as e:
+            self.log("core midi: %s" % (str(e)[:160] or type(e).__name__))
+            return False
+
+    def _start_portmidi(self):
+        """On Windows: the MIDI that comes with pygame. It sees the controllers present when the app starts."""
+        if sys.platform != "win32" and os.environ.get("PP_MIDI") != "portmidi":
+            return False
+        try:
+            self.java = PortMidi(self.events, self.log)
+            self.devices = self.java.rescan()
+            return True
+        except Exception as e:
+            self.log("portmidi: %s" % (str(e)[:160] or type(e).__name__))
             return False
 
     def scan(self):
@@ -227,6 +253,9 @@ class MidiPort:
             try:
                 if now >= next_scan and lib is not None:
                     self.scan()
+                    next_scan = now + 3.0
+                elif now >= next_scan and hasattr(self.java, "rescan"):
+                    self.devices = self.java.rescan()
                     next_scan = now + 3.0
                 while lib is not None and lib.snd_seq_event_input(seq, ctypes.byref(evp)) >= 0 and evp:
                     got = decode(evp.contents.type, evp.contents.data)
@@ -410,6 +439,58 @@ class RawMidi:
                     elif kind == 0xC0:
                         out.append(("pc", a))
         return out
+
+
+class PortMidi:
+    """Controllers on Windows, through pygame.midi. MidiPort uses it as it uses Core MIDI on a Mac: rescan()
+    for the names, send() for notes and clock. Windows' own built-in synth is left alone, or every pad
+    would also play a piano note."""
+    SKIP = ("microsoft gs wavetable", "midi mapper")
+
+    def __init__(self, events, log=lambda msg: None):
+        import pygame.midi as pm
+        pm.init()
+        self.pm, self.events, self.log = pm, events, log
+        self.ins, self.outs = [], []
+        for i in range(pm.get_count()):
+            _, name, is_in, is_out, _ = pm.get_device_info(i)
+            name = name.decode("utf-8", "replace")
+            if any(s in name.lower() for s in self.SKIP):
+                continue
+            try:
+                if is_in:
+                    self.ins.append((name, pm.Input(i), RawMidi()))
+                    log("midi in: %s" % name)
+                elif is_out:
+                    self.outs.append((name, pm.Output(i)))
+            except Exception as e:                  # one device another program holds must not stop the rest
+                log("midi %s: %s" % (name, e))
+        self.running = True
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        while self.running:
+            try:
+                for _, port, parser in self.ins:
+                    while port.poll():
+                        for data, _ in port.read(32):
+                            need = _LENGTH.get(data[0] & 0xF0)
+                            self.events.extend(parser.feed(bytes(data[:1 + need]) if need else bytes(data[:1])))
+            except Exception as e:
+                self.log("portmidi read: %s" % e)
+                time.sleep(1.0)
+            time.sleep(0.002)
+
+    def rescan(self):
+        return [name for name, _, _ in self.ins]
+
+    def send(self, data):
+        data = list(data)
+        for _, port in self.outs:
+            port.write_short(*data)
+
+    def close(self):
+        self.running = False
 
 
 class AndroidMidi:

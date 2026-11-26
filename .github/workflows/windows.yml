@@ -1,0 +1,52 @@
+# Builds the Windows app (experimental) and runs the tests on Windows. Started by hand from the Actions tab,
+# or with: gh workflow run windows.yml
+name: Windows app
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -r requirements.txt pyinstaller
+      - name: Tests
+        shell: bash
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+          PP_NOAUDIO: "1"
+          PP_NOMIDI: "1"
+        run: |
+          for t in engine effects sampler robustness styles midi new touch tablet; do
+            echo "== $t"; python pocketpads/tests/test_$t.py pocketpads
+          done
+      - name: Build
+        shell: bash
+        run: |
+          cd desktop
+          pyinstaller --noconfirm --windowed --name PocketPads --paths ../pocketpads \
+            --add-data "$(cygpath -w "$PWD/../pocketpads/art");art" --exclude-module tests \
+            --distpath build/dist --workpath build/work --specpath build app_main.py
+      - name: Start it once
+        shell: bash
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          export PP_DATA="$RUNNER_TEMP/ppdata" PP_WINDOW=1280x800
+          desktop/build/dist/PocketPads/PocketPads.exe &
+          sleep 15
+          cat "$PP_DATA/pocketpads.log"
+          test ! -f "$PP_DATA/pocketpads_crash.log" || { cat "$PP_DATA/pocketpads_crash.log"; exit 1; }
+          grep -q "audio: ok" "$PP_DATA/pocketpads.log"
+          taskkill //IM PocketPads.exe //F || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketPads-windows
+          path: desktop/build/dist/PocketPads
