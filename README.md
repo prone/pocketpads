@@ -6,7 +6,7 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 
 ![The PLAY page: sixteen pads and the selected pad's waveform](site/img/play.png)
 
-**Status: early (version 0.4).** It has been tested on exactly one device, a TrimUI Smart Pro on KNULLI Scarab. Expect rough edges, and expect project files to change format.
+**Status: early (version 0.5).** It has been tested on exactly one device, a TrimUI Smart Pro on KNULLI Scarab. Expect rough edges, and expect project files to change format.
 
 ## Features
 
@@ -35,6 +35,15 @@ A 64-pad sample sequencer and sampler (four banks of sixteen pads) for Linux han
 - On the BEAT page the left stick changes the tempo and the right stick the selected pad's volume
 
 The manual is in [`site/`](site/index.html): an overview page, and a [full guide](site/guide.html) with tutorials, how to manage projects and sounds, and a reference for every setting.
+
+## What's new in 0.5
+
+- **Bluetooth MIDI.** Bluetooth controllers connect by themselves when PocketPads starts, with nothing to pair in the system menu. A BLUETOOTH MIDI row on the PROJ page searches again.
+- **Knobs you can map.** A MIDI KNOBS list on the PROJ page chooses what each of sixteen controller knobs changes: a setting of the selected pad, or tempo, master volume, swing, compressor, delay feedback or reverb size.
+- **M-Vave SMC-PAD set up from the start.** Its knobs, knob bank, play, stop, pause, record, `<<` and `>>` and pad bank work as they come, with the numbers read from a real unit. The SMC-PAD Pocket's pads work too.
+- **Pad 1 is at the bottom left.** The PLAY grid is numbered like pad controllers, pad 1 bottom left and pad 16 top right, so the pad you hit is the pad that lights up.
+- Controller transport buttons run the beat, and note repeat works from a controller's pads.
+- The guide has a controller reference with drawings of both M-Vave pads.
 
 ## What's new in 0.4
 
